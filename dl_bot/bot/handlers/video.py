@@ -4,6 +4,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
+from sqlalchemy.ext.asyncio import AsyncSession
 from ...tasks import video_tasks # Import the task module
 from ...utils import database
 
@@ -16,17 +17,15 @@ class VideoEditFSM(StatesGroup):
 
 # --- FSM Handlers ---
 @router.message(F.video)
-async def handle_user_video(message: types.Message, state: FSMContext):
+async def handle_user_video(message: types.Message, state: FSMContext, session: AsyncSession):
     """
     Entry point for the video editing flow. Triggers when a user sends a video.
     """
-    user = message.from_user
+    user = await database.get_or_create_user(session, user_id=message.from_user.id)
 
     # We need the personal archive to upload the customized video to.
-    # The original Telethon logic is now in a helper.
-    # For now, we'll just get the ID from the DB. The creation logic is called inside the task.
-    user_data = database.get_user_data(user.id)
-    personal_archive_id = user_data.get("personal_archive_id")
+    # The creation logic is called inside the task if it doesn't exist.
+    personal_archive_id = user.personal_archive_id
 
     # Store the video's file_id in the FSM state for later retrieval
     await state.update_data(video_file_id=message.video.file_id, personal_archive_id=personal_archive_id)

@@ -4,22 +4,19 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 
+from sqlalchemy.ext.asyncio import AsyncSession
 from ...utils import database
 
 router = Router()
 
 @router.message(CommandStart())
-async def handle_start(message: types.Message):
+async def handle_start(message: types.Message, session: AsyncSession):
     """
     Handler for the /start command. Greets the user and sets up the main keyboard.
     """
     user = message.from_user
-    user_data = database.get_user_data(user.id)
-
-    # Update username if it has changed
-    if user_data.get('username') != user.username:
-        user_data['username'] = user.username
-        database.update_user_data(user.id, user_data)
+    # The get_or_create_user function now also handles username updates
+    await database.get_or_create_user(session, user_id=user.id, username=user.username)
 
     start_message = (
         "سلام! به ربات مولتی دانلودر خوش اومدید\n"
@@ -36,12 +33,11 @@ async def handle_start(message: types.Message):
 
 @router.message(Command("help"))
 @router.message(lambda message: message.text == "راهنما")
-async def handle_help(message: types.Message):
+async def handle_help(message: types.Message, session: AsyncSession):
     """
     Handler for the /help command or "راهنما" button. Displays the help text.
     """
-    texts_db = database.get_texts()
-    help_text = texts_db.get("help_text", "متن راهنما هنوز تنظیم نشده است.")
+    help_text = await database.get_text(session, key="help_text", default="متن راهنما هنوز تنظیم نشده است.")
     await message.answer(help_text)
 
 

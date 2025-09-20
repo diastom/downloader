@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     # Comma-separated list of admin user IDs
     admin_ids_str: str
 
+    # PostgreSQL connection URL
+    database_url: str = "postgresql+asyncpg://user:password@localhost:5432/dlbot_db"
+
     @property
     def admin_ids(self) -> List[int]:
         """
