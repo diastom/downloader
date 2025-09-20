@@ -6,6 +6,7 @@ from aiogram import Router, types, F
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import or_f
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...tasks import download_tasks
 from ...utils import helpers, database
@@ -37,17 +38,17 @@ class DownloadFSM(StatesGroup):
 # --- Main Link Handler ---
 @router.message(F.text.regexp(URL_REGEX))
 @cooldown(seconds=10) # Reduced cooldown for testing
-async def handle_link(message: types.Message, state: FSMContext):
+async def handle_link(message: types.Message, state: FSMContext, session: AsyncSession):
     url = message.text.strip()
     user_id = message.from_user.id
     domain = urllib.parse.urlparse(url).netloc.lower().replace('www.', '')
 
-    is_allowed, reason = await helpers.check_subscription(user_id, domain)
+    is_allowed, reason = await helpers.check_subscription(session, user_id, domain)
     if not is_allowed:
         await message.answer(reason)
         return
 
-    database.log_download_activity(user_id, domain)
+    await database.log_download_activity(session, user_id, domain)
 
     if domain in MANHWA_DOMAINS:
         await handle_manhwa_link(message, state, url, domain)

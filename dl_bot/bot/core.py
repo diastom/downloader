@@ -2,7 +2,10 @@ from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from ..config import settings
+from ..utils.db_session import AsyncSessionLocal
 from .handlers import admin, common, downloader, settings as user_settings, video
+from .middlewares import DbSessionMiddleware
+
 
 def setup_dispatcher() -> Dispatcher:
     """
@@ -11,6 +14,9 @@ def setup_dispatcher() -> Dispatcher:
     # Using simple in-memory storage for FSM. For production, RedisStorage is better.
     storage = MemoryStorage()
     dp = Dispatcher(storage=storage)
+
+    # Register our custom middleware to provide a session to each handler
+    dp.update.middleware(DbSessionMiddleware(session_pool=AsyncSessionLocal))
 
     # Include all the routers from the handlers package
     dp.include_router(common.router)

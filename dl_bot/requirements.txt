@@ -9,3 +9,6 @@ webdriver-manager
 telethon
 pydantic-settings
 ffmpeg-python
+sqlalchemy[asyncio]
+asyncpg
+alembic

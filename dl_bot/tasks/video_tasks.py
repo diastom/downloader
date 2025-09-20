@@ -7,6 +7,7 @@ from aiogram import Bot
 
 from ..config import settings
 from ..utils import database, telegram_api, video_processor, helpers
+from ..utils.db_session import AsyncSessionLocal
 from .celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -24,38 +25,40 @@ def process_video_customization_task(user_id: int, chat_id: int, personal_archiv
     """
     async def _async_worker():
         status_message = None
-        with tempfile.TemporaryDirectory() as temp_dir:
-            try:
-                status_message = await bot.send_message(chat_id=chat_id, text="⏳ Your video processing has started...")
+        async with AsyncSessionLocal() as session:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                try:
+                    status_message = await bot.send_message(chat_id=chat_id, text="⏳ Your video processing has started...")
 
-                await bot.edit_message_text("📥 Downloading the original video...", chat_id=chat_id, message_id=status_message.message_id)
+                    await bot.edit_message_text("📥 Downloading the original video...", chat_id=chat_id, message_id=status_message.message_id)
 
-                # The video file needs to be downloaded using the bot
-                video_file = await bot.get_file(video_file_id)
-                video_path = os.path.join(temp_dir, 'original_video.mp4')
-                await bot.download_file(video_file.file_path, destination=video_path)
-                logger.info(f"Video with file_id {video_file_id} downloaded to {video_path}")
+                    video_file = await bot.get_file(video_file_id)
+                    video_path = os.path.join(temp_dir, 'original_video.mp4')
+                    await bot.download_file(video_file.file_path, destination=video_path)
+                    logger.info(f"Video with file_id {video_file_id} downloaded to {video_path}")
 
-                final_video_path = video_path
-                custom_thumb_path = None
+                    final_video_path = video_path
+                    custom_thumb_path = None
 
-                if choice in ['water', 'both']:
-                    await bot.edit_message_text("💧 Applying watermark...", chat_id=chat_id, message_id=status_message.message_id)
-                    watermark_settings = get_user_watermark_settings(user_id)
-                    # Run blocking ffmpeg call in a thread
-                    final_video_path = await asyncio.to_thread(
-                        apply_watermark_to_video, video_path, watermark_settings
-                    )
-                    if not final_video_path:
-                        raise Exception("Failed to apply watermark.")
+                    if choice in ['water', 'both']:
+                        await bot.edit_message_text("💧 Applying watermark...", chat_id=chat_id, message_id=status_message.message_id)
+                        watermark_settings_obj = await database.get_user_watermark_settings(session, user_id)
+                        # Convert ORM object to dict for the helper
+                        watermark_settings = {c.name: getattr(watermark_settings_obj, c.name) for c in watermark_settings_obj.__table__.columns}
 
-                if choice in ['thumb', 'both']:
-                    custom_thumbnail_id = get_user_thumbnail(user_id)
-                    if custom_thumbnail_id:
-                        await bot.edit_message_text("🖼️ Preparing thumbnail...", chat_id=chat_id, message_id=status_message.message_id)
-                        thumb_file = await bot.get_file(custom_thumbnail_id)
-                        custom_thumb_path = os.path.join(temp_dir, 'thumb.jpg')
-                        await bot.download_file(thumb_file.file_path, destination=custom_thumb_path)
+                        final_video_path = await asyncio.to_thread(
+                            video_processor.apply_watermark_to_video, video_path, watermark_settings
+                        )
+                        if not final_video_path:
+                            raise Exception("Failed to apply watermark.")
+
+                    if choice in ['thumb', 'both']:
+                        custom_thumbnail_id = await database.get_user_thumbnail(session, user_id)
+                        if custom_thumbnail_id:
+                            await bot.edit_message_text("🖼️ Preparing thumbnail...", chat_id=chat_id, message_id=status_message.message_id)
+                            thumb_file = await bot.get_file(custom_thumbnail_id)
+                            custom_thumb_path = os.path.join(temp_dir, 'thumb.jpg')
+                            await bot.download_file(thumb_file.file_path, destination=custom_thumb_path)
 
                 await bot.edit_message_text("📤 Uploading the final video...", chat_id=chat_id, message_id=status_message.message_id)
                 duration, width, height = await asyncio.to_thread(get_video_metadata, final_video_path)

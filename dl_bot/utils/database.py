@@ -1,158 +1,123 @@
-import json
+import logging
 from datetime import datetime
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from . import models
 from ..config import settings
+from .helpers import ALL_SUPPORTED_SITES
 
-# --- Database File Paths ---
-USER_DB_FILE = "dl_bot/data/BotData.json"
-THUMBNAIL_DB = "dl_bot/data/Thumb.json"
-WATERMARK_DB = "dl_bot/data/WatermarkSettings.json"
-TEXTS_DB_FILE = "dl_bot/data/texts.json"
-VIDEO_CACHE_DB = "dl_bot/data/VideoCache.json"
+logger = logging.getLogger(__name__)
 
-# A simple dictionary to hold all supported sites for initializing user profiles
-# This should ideally be in a more central config, but keeping it here for now.
-ALL_SUPPORTED_SITES = {
-    "Manhwa/Webtoon": ["toonily.com", "toonily.me", "manhwaclan.com", "mangadistrict.com", "comick.io"],
-    "Gallery/Hentai": ["rule34.xyz", "coomer.st", "aryion.com", "kemono.cr", "tapas.io", "tsumino.com", "danbooru.donmai.us", "e621.net", "mangadex.org", "e-hentai.org"],
-    "Album": ["erome.com"],
-    "Cosplay": ["cosplaytele.com"],
-    "Video": ["pornhub.com", "eporner.com"]
-}
+# --- User ---
+async def get_or_create_user(session: AsyncSession, user_id: int, username: str | None = None) -> models.User:
+    """
+    Retrieves a user from the database or creates a new one if they don't exist.
+    """
+    # Try to get the user
+    stmt = select(models.User).where(models.User.id == user_id)
+    result = await session.execute(stmt)
+    user = result.scalar_one_or_none()
 
-# --- Generic DB Functions ---
-def _load_json(filepath: str, default=None):
-    """Loads a JSON file and returns its content, or a default value on error."""
-    if default is None:
-        default = {}
-    try:
-        with open(filepath, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return default
+    if user is None:
+        logger.info(f"Creating new user profile for user_id: {user_id}")
+        # Create default settings for a new user
+        default_allowed_sites = {site: False for category in ALL_SUPPORTED_SITES.values() for site in category}
 
-def _save_json(filepath: str, data: dict):
-    """Saves a dictionary to a JSON file."""
-    with open(filepath, 'w', encoding='utf-8') as f:
-        json.dump(data, f, indent=4, ensure_ascii=False)
+        user = models.User(
+            id=user_id,
+            username=username,
+            is_admin=user_id in settings.admin_ids,
+            sub_is_active=False,
+            sub_download_limit=-1,
+            sub_allowed_sites=default_allowed_sites,
+            stats_site_usage={},
+        )
+        session.add(user)
 
-# --- Thumbnail DB ---
-def get_user_thumbnail(user_id: int) -> str | None:
-    db = _load_json(THUMBNAIL_DB)
-    return db.get(str(user_id))
+        # Also create their default watermark settings
+        watermark = models.WatermarkSetting(user=user, text=f"@{settings.bot_token.split(':')[0]}")
+        session.add(watermark)
 
-def set_user_thumbnail(user_id: int, file_id: str):
-    db = _load_json(THUMBNAIL_DB)
-    db[str(user_id)] = file_id
-    _save_json(THUMBNAIL_DB, db)
+        await session.commit()
+        await session.refresh(user)
 
-def delete_user_thumbnail(user_id: int) -> bool:
-    db = _load_json(THUMBNAIL_DB)
-    if str(user_id) in db:
-        del db[str(user_id)]
-        _save_json(THUMBNAIL_DB, db)
-        return True
-    return False
+    # Update username if it has changed
+    if username and user.username != username:
+        user.username = username
+        await session.commit()
 
-# --- User Data DB (BotData.json) ---
-def get_user_data(user_id: int) -> dict:
-    """Retrieves user data, creating a default profile if one doesn't exist."""
-    db = _load_json(USER_DB_FILE)
-    user_id_str = str(user_id)
+    return user
 
-    if user_id_str not in db:
-        db[user_id_str] = {
-            "username": "",
-            "is_admin": user_id in settings.admin_ids,
-            "subscription": {
-                "is_active": False,
-                "expiry_date": None,
-                "allowed_sites": {site: False for category in ALL_SUPPORTED_SITES.values() for site in category},
-                "download_limit": -1
-            },
-            "stats": {
-                "last_seen": str(datetime.now()),
-                "downloads_today": {"date": str(datetime.now().date()), "count": 0},
-                "site_usage": {}
-            },
-            "personal_archive_id": None
-        }
-        _save_json(USER_DB_FILE, db)
+async def get_all_users(session: AsyncSession) -> list[models.User]:
+    """Retrieves all users from the database."""
+    stmt = select(models.User)
+    result = await session.execute(stmt)
+    return result.scalars().all()
 
-    return db[user_id_str]
 
-def update_user_data(user_id: int, data: dict):
-    """Updates the data for a specific user."""
-    db = _load_json(USER_DB_FILE)
-    db[str(user_id)] = data
-    _save_json(USER_DB_FILE, db)
-
-def get_all_users() -> dict:
-    """Loads the entire user database."""
-    return _load_json(USER_DB_FILE)
-
-def log_download_activity(user_id: int, site_domain: str):
-    """Logs a user's download activity for statistics."""
-    user_data = get_user_data(user_id)
-    today_str = str(datetime.now().date())
-
-    # Reset daily download count if the date has changed
-    if user_data['stats']['downloads_today'].get('date') != today_str:
-        user_data['stats']['downloads_today'] = {"date": today_str, "count": 0}
-
-    user_data['stats']['downloads_today']['count'] += 1
-    user_data['stats']['site_usage'][site_domain] = user_data['stats']['site_usage'].get(site_domain, 0) + 1
-
-    update_user_data(user_id, user_data)
-
-# --- Texts DB ---
-def get_texts() -> dict:
-    """Loads the editable texts database."""
-    return _load_json(TEXTS_DB_FILE, default={"help_text": "Default help text. Admin can change this."})
-
-def save_texts(data: dict):
-    """Saves the editable texts database."""
-    _save_json(TEXTS_DB_FILE, data)
-
-# --- Video Cache DB ---
-def add_to_video_cache(url: str, format_id: str, message_id: int):
-    """Adds a video with a specific format to the cache."""
-    cache = _load_json(VIDEO_CACHE_DB)
-    if url not in cache:
-        cache[url] = {}
-    cache[url][format_id] = message_id
-    _save_json(VIDEO_CACHE_DB, cache)
-
-def get_from_video_cache(url: str, format_id: str) -> int | None:
-    """Looks up a video with a specific format in the cache."""
-    cache = _load_json(VIDEO_CACHE_DB)
-    return cache.get(url, {}).get(format_id)
-
-# --- Watermark DB ---
-def get_user_watermark_settings(user_id: int) -> dict:
-    """Retrieves watermark settings for a user, returning defaults if not set."""
-    db = _load_json(WATERMARK_DB)
-    user_id_str = str(user_id)
-
-    defaults = {
-        "enabled": False,
-        "text": f"@{settings.bot_token.split(':')[0]}", # A safe way to get bot username-like ID
-        "position": "top_left",
-        "size": 32,
-        "color": "white",
-        "stroke": 2,
-    }
-
-    if user_id_str in db:
-        user_settings = db[user_id_str]
-        # Ensure all keys from defaults exist
-        for key, value in defaults.items():
-            user_settings.setdefault(key, value)
-        return user_settings
+# --- Thumbnail ---
+async def set_user_thumbnail(session: AsyncSession, user_id: int, file_id: str):
+    user = await get_or_create_user(session, user_id)
+    if user.thumbnail:
+        user.thumbnail.file_id = file_id
     else:
-        return defaults
+        user.thumbnail = models.Thumbnail(file_id=file_id)
+    await session.commit()
 
-def update_user_watermark_settings(user_id: int, new_settings: dict):
-    """Updates watermark settings for a user."""
-    db = _load_json(WATERMARK_DB)
-    db[str(user_id)] = new_settings
-    _save_json(WATERMARK_DB, db)
+async def get_user_thumbnail(session: AsyncSession, user_id: int) -> str | None:
+    stmt = select(models.Thumbnail.file_id).where(models.Thumbnail.user_id == user_id)
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+# --- Watermark ---
+async def get_user_watermark_settings(session: AsyncSession, user_id: int) -> models.WatermarkSetting:
+    user = await get_or_create_user(session, user_id)
+    # The relationship ensures the watermark settings are loaded with the user
+    # and created if they don't exist via get_or_create_user
+    return user.watermark
+
+async def update_user_watermark_settings(session: AsyncSession, user_id: int, new_settings: dict):
+    stmt = select(models.WatermarkSetting).where(models.WatermarkSetting.user_id == user_id)
+    result = await session.execute(stmt)
+    watermark = result.scalar_one()
+
+    for key, value in new_settings.items():
+        if hasattr(watermark, key):
+            setattr(watermark, key, value)
+    await session.commit()
+
+
+# --- Bot Texts ---
+async def get_text(session: AsyncSession, key: str, default: str = "") -> str:
+    stmt = select(models.BotText.value).where(models.BotText.key == key)
+    result = await session.execute(stmt)
+    value = result.scalar_one_or_none()
+    return value or default
+
+async def set_text(session: AsyncSession, key: str, value: str):
+    stmt = select(models.BotText).where(models.BotText.key == key)
+    result = await session.execute(stmt)
+    bot_text = result.scalar_one_or_none()
+    if bot_text:
+        bot_text.value = value
+    else:
+        bot_text = models.BotText(key=key, value=value)
+        session.add(bot_text)
+    await session.commit()
+
+# --- Stats ---
+async def log_download_activity(session: AsyncSession, user_id: int, domain: str):
+    user = await get_or_create_user(session, user_id)
+
+    # Update site usage stats
+    new_site_usage = user.stats_site_usage.copy() if user.stats_site_usage else {}
+    new_site_usage[domain] = new_site_usage.get(domain, 0) + 1
+    user.stats_site_usage = new_site_usage # Must re-assign for SQLAlchemy to detect the change
+
+    # This function now only handles the site usage. Daily download count can be handled
+    # by a separate system or a more complex query if needed.
+    # For simplicity, we'll omit the daily counter from the DB model for now.
+
+    await session.commit()
