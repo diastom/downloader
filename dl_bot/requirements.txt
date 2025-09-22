@@ -11,4 +11,5 @@ pydantic-settings
 ffmpeg-python
 sqlalchemy[asyncio]
 asyncpg
+psycopg2-binary
 alembic

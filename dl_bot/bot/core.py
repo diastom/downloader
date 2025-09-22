@@ -1,10 +1,10 @@
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 
-from ..config import settings
-from ..utils.db_session import AsyncSessionLocal
-from .handlers import admin, common, downloader, settings as user_settings, video
-from .middlewares import DbSessionMiddleware
+from dl_bot.config import settings
+from dl_bot.utils.db_session import AsyncSessionLocal
+from dl_bot.bot.handlers import admin, common, downloader, settings as user_settings, video
+from dl_bot.bot.middlewares import DbSessionMiddleware
 
 
 def setup_dispatcher() -> Dispatcher:
