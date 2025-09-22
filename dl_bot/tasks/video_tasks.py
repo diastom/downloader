@@ -5,10 +5,13 @@ import tempfile
 
 from aiogram import Bot
 
-from ..config import settings
-from ..utils import database, telegram_api, video_processor, helpers
-from ..utils.db_session import AsyncSessionLocal
-from .celery_app import celery_app
+from dl_bot.config import settings
+from dl_bot.utils import database, helpers
+from dl_bot.utils.db_session import AsyncSessionLocal
+from dl_bot.tasks.celery_app import celery_app
+from dl_bot.utils.video_processor import get_video_metadata, apply_watermark_to_video
+from dl_bot.utils.telegram_api import upload_video
+from dl_bot.utils.telegram_client import get_or_create_personal_archive
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +29,8 @@ def process_video_customization_task(user_id: int, chat_id: int, personal_archiv
     async def _async_worker():
         status_message = None
         async with AsyncSessionLocal() as session:
-            with tempfile.TemporaryDirectory() as temp_dir:
-                try:
+            try:
+                with tempfile.TemporaryDirectory() as temp_dir:
                     status_message = await bot.send_message(chat_id=chat_id, text="⏳ Your video processing has started...")
 
                     await bot.edit_message_text("📥 Downloading the original video...", chat_id=chat_id, message_id=status_message.message_id)
@@ -59,6 +62,10 @@ def process_video_customization_task(user_id: int, chat_id: int, personal_archiv
                             thumb_file = await bot.get_file(custom_thumbnail_id)
                             custom_thumb_path = os.path.join(temp_dir, 'thumb.jpg')
                             await bot.download_file(thumb_file.file_path, destination=custom_thumb_path)
+
+                personal_archive_id = await telegram_client.get_or_create_personal_archive(session, user_id, (await bot.get_me()).username)
+                if not personal_archive_id:
+                    raise Exception("Failed to get or create personal archive.")
 
                 await bot.edit_message_text("📤 Uploading the final video...", chat_id=chat_id, message_id=status_message.message_id)
                 duration, width, height = await asyncio.to_thread(get_video_metadata, final_video_path)

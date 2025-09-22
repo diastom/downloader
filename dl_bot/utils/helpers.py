@@ -23,8 +23,9 @@ from webdriver_manager.firefox import GeckoDriverManager
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from . import database
+from dl_bot.utils import database
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +91,6 @@ def check_dependencies():
     except Exception as e:
         logger.error(f"[Selenium] Error setting up WebDriver: {e}")
         all_ok = False
-from sqlalchemy.ext.asyncio import AsyncSession
     return all_ok
 
 async def check_subscription(session: AsyncSession, user_id: int, domain: str) -> Tuple[bool, str]:

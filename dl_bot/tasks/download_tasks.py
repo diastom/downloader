@@ -11,10 +11,10 @@ import concurrent.futures
 from aiogram import Bot
 from aiogram.types import FSInputFile
 
-from ..config import settings
-from ..utils import database, helpers, telegram_api, video_processor, telegram_client
-from ..utils.db_session import AsyncSessionLocal
-from .celery_app import celery_app
+from dl_bot.config import settings
+from dl_bot.utils import database, helpers, telegram_api, video_processor, telegram_client
+from dl_bot.utils.db_session import AsyncSessionLocal
+from dl_bot.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 
@@ -33,8 +33,8 @@ def download_and_upload_video_task(chat_id: int, url: str, selected_format: str,
 
             title = helpers.sanitize_filename(video_info.get('title', 'untitled_video'))
 
-            with tempfile.TemporaryDirectory() as temp_dir:
-                try:
+            try:
+                with tempfile.TemporaryDirectory() as temp_dir:
                     await bot.edit_message_text(f"📥 Downloading: {title}...", chat_id=chat_id, message_id=status_message.message_id)
 
                     raw_video_path = await asyncio.to_thread(helpers.download_video, url, temp_dir, selected_format)
@@ -66,9 +66,9 @@ def download_and_upload_video_task(chat_id: int, url: str, selected_format: str,
 
                     await bot.delete_message(chat_id, status_message.message_id)
 
-                except Exception as e:
-                    logger.error(f"Celery Video Task Error: {e}", exc_info=True)
-                    await bot.edit_message_text(f"❌ An error occurred: {e}", chat_id=chat_id, message_id=status_message.message_id)
+            except Exception as e:
+                logger.error(f"Celery Video Task Error: {e}", exc_info=True)
+                await bot.edit_message_text(f"❌ An error occurred: {e}", chat_id=chat_id, message_id=status_message.message_id)
 
     helpers.run_async_in_sync(_async_worker())
 
@@ -80,34 +80,33 @@ def process_gallery_dl_task(chat_id: int, url: str, create_zip: bool):
         async with AsyncSessionLocal() as session:
             status_message = await bot.send_message(chat_id=chat_id, text=f"📥 Request for '{urllib.parse.urlparse(url).netloc}' received...")
 
-            with tempfile.TemporaryDirectory() as temp_dir:
             try:
-                downloaded_files, error = await helpers.run_gallery_dl_download(url, temp_dir)
-                if error or not downloaded_files:
-                    raise Exception(error or "No files were downloaded.")
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    downloaded_files, error = await helpers.run_gallery_dl_download(url, temp_dir)
+                    if error or not downloaded_files:
+                        raise Exception(error or "No files were downloaded.")
 
-                if create_zip:
-                    await bot.edit_message_text("🗜️ Creating ZIP file...", chat_id=chat_id, message_id=status_message.message_id)
-                    zip_path = os.path.join(temp_dir, "archive.zip")
-                    await asyncio.to_thread(helpers.create_zip_from_folder, temp_dir, zip_path)
+                    if create_zip:
+                        await bot.edit_message_text("🗜️ Creating ZIP file...", chat_id=chat_id, message_id=status_message.message_id)
+                        zip_path = os.path.join(temp_dir, "archive.zip")
+                        await asyncio.to_thread(helpers.create_zip_from_folder, temp_dir, zip_path)
 
-                    await bot.edit_message_text("📤 Uploading ZIP...", chat_id=chat_id, message_id=status_message.message_id)
-                    await bot.send_document(chat_id, FSInputFile(zip_path))
-                else:
-                    total = len(downloaded_files)
-                    for i, file_path in enumerate(downloaded_files):
-                        filename = os.path.basename(file_path)
-                        await bot.edit_message_text(f"📤 Uploading {i+1}/{total}: {filename}", chat_id=chat_id, message_id=status_message.message_id)
-                        # Simple check for media type based on extension
-                        ext = os.path.splitext(filename)[1].lower()
-                        if ext in ['.jpg', '.jpeg', '.png', '.webp']:
-                            await bot.send_photo(chat_id, FSInputFile(file_path), caption=filename)
-                        elif ext in ['.mp4', '.mkv', '.webm']:
-                            await bot.send_video(chat_id, FSInputFile(file_path), caption=filename)
-                        else:
-                            await bot.send_document(chat_id, FSInputFile(file_path), caption=filename)
+                        await bot.edit_message_text("📤 Uploading ZIP...", chat_id=chat_id, message_id=status_message.message_id)
+                        await bot.send_document(chat_id, FSInputFile(zip_path))
+                    else:
+                        total = len(downloaded_files)
+                        for i, file_path in enumerate(downloaded_files):
+                            filename = os.path.basename(file_path)
+                            await bot.edit_message_text(f"📤 Uploading {i+1}/{total}: {filename}", chat_id=chat_id, message_id=status_message.message_id)
+                            ext = os.path.splitext(filename)[1].lower()
+                            if ext in ['.jpg', '.jpeg', '.png', '.webp']:
+                                await bot.send_photo(chat_id, FSInputFile(file_path), caption=filename)
+                            elif ext in ['.mp4', '.mkv', '.webm']:
+                                await bot.send_video(chat_id, FSInputFile(file_path), caption=filename)
+                            else:
+                                await bot.send_document(chat_id, FSInputFile(file_path), caption=filename)
 
-                await bot.edit_message_text("✅ All files sent successfully.", chat_id=chat_id, message_id=status_message.message_id)
+                    await bot.edit_message_text("✅ All files sent successfully.", chat_id=chat_id, message_id=status_message.message_id)
 
             except Exception as e:
                 logger.error(f"Celery Gallery-DL Task Error: {e}", exc_info=True)
@@ -117,10 +116,6 @@ def process_gallery_dl_task(chat_id: int, url: str, create_zip: bool):
 
 @celery_app.task(name="tasks.process_manhwa_task")
 def process_manhwa_task(chat_id: int, manhwa_title: str, chapters_to_download: list, create_zip: bool, site_key: str):
-    """
-    A generic Celery task to download chapters from various manhwa/comic sites.
-    It uses a site_key to determine which helper functions to use.
-    """
     site_configs = {
         'toonily.com': {'get_images': helpers.get_chapter_image_urls_com, 'needs_selenium': True, 'headers': {'Referer': 'https://toonily.com/'}},
         'toonily.me': {'get_images': helpers.mn2_get_chapter_images, 'needs_selenium': False, 'headers': {'Referer': f'https://{helpers.TOONILY_ME_DOMAIN}/'}},
@@ -138,46 +133,46 @@ def process_manhwa_task(chat_id: int, manhwa_title: str, chapters_to_download: l
             status_message = await bot.send_message(chat_id=chat_id, text=f"📥 Request for '{manhwa_title}' received...")
 
             manhwa_folder = Path(tempfile.gettempdir()) / helpers.sanitize_filename(manhwa_title)
-        manhwa_folder.mkdir(parents=True, exist_ok=True)
+            manhwa_folder.mkdir(parents=True, exist_ok=True)
 
-        driver = None
-        try:
-            if config['needs_selenium']:
-                driver = await asyncio.to_thread(helpers.setup_chrome_driver if site_key != 'comick.io' else helpers.setup_firefox_driver)
-                if not driver: raise Exception("Failed to start Selenium driver.")
+            driver = None
+            try:
+                if config['needs_selenium']:
+                    driver = await asyncio.to_thread(helpers.setup_chrome_driver if site_key != 'comick.io' else helpers.setup_firefox_driver)
+                    if not driver: raise Exception("Failed to start Selenium driver.")
 
-            total = len(chapters_to_download)
-            for i, chapter in enumerate(chapters_to_download):
-                await bot.edit_message_text(f"[{i+1}/{total}] 📥 Downloading: {chapter['name']}...", chat_id=chat_id, message_id=status_message.message_id)
+                total = len(chapters_to_download)
+                for i, chapter in enumerate(chapters_to_download):
+                    await bot.edit_message_text(f"[{i+1}/{total}] 📥 Downloading: {chapter['name']}...", chat_id=chat_id, message_id=status_message.message_id)
 
-                chapter_folder = manhwa_folder / helpers.sanitize_filename(chapter['name'])
-                chapter_folder.mkdir(exist_ok=True)
+                    chapter_folder = manhwa_folder / helpers.sanitize_filename(chapter['name'])
+                    chapter_folder.mkdir(exist_ok=True)
 
-                image_urls = await asyncio.to_thread(config['get_images'], chapter['url'], driver) if driver else await asyncio.to_thread(config['get_images'], chapter['url'])
+                    image_urls = await asyncio.to_thread(config['get_images'], chapter['url'], driver) if driver else await asyncio.to_thread(config['get_images'], chapter['url'])
 
-                dl_tasks = [(url, os.path.join(chapter_folder, f"{j+1:03d}.jpg"), config['headers']) for j, url in enumerate(image_urls)]
+                    dl_tasks = [(url, os.path.join(chapter_folder, f"{j+1:03d}.jpg"), config['headers']) for j, url in enumerate(image_urls)]
 
-                with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-                    executor.map(helpers.download_single_image, dl_tasks)
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+                        executor.map(helpers.download_single_image, dl_tasks)
 
-                if create_zip:
-                    zip_path = manhwa_folder / f"{manhwa_title} - {chapter['name']}.zip"
-                    await asyncio.to_thread(helpers.create_zip_from_folder, str(chapter_folder), str(zip_path))
-                    await bot.send_document(chat_id, FSInputFile(zip_path))
-                    os.remove(zip_path)
-                else:
-                    for img in sorted(os.listdir(chapter_folder)):
-                        await bot.send_photo(chat_id, FSInputFile(chapter_folder / img))
+                    if create_zip:
+                        zip_path = manhwa_folder / f"{manhwa_title} - {chapter['name']}.zip"
+                        await asyncio.to_thread(helpers.create_zip_from_folder, str(chapter_folder), str(zip_path))
+                        await bot.send_document(chat_id, FSInputFile(zip_path))
+                        os.remove(zip_path)
+                    else:
+                        for img in sorted(os.listdir(chapter_folder)):
+                            await bot.send_photo(chat_id, FSInputFile(chapter_folder / img))
 
-                shutil.rmtree(chapter_folder)
+                    shutil.rmtree(chapter_folder)
 
-            await bot.edit_message_text(f"✅ Download complete for '{manhwa_title}'.", chat_id=chat_id, message_id=status_message.message_id)
+                await bot.edit_message_text(f"✅ Download complete for '{manhwa_title}'.", chat_id=chat_id, message_id=status_message.message_id)
 
-        except Exception as e:
-            logger.error(f"Celery Manhwa Task Error for {site_key}: {e}", exc_info=True)
-            await bot.edit_message_text(f"❌ An error occurred: {e}", chat_id=chat_id, message_id=status_message.message_id)
-        finally:
-            if driver: driver.quit()
-            if manhwa_folder.exists(): shutil.rmtree(manhwa_folder)
+            except Exception as e:
+                logger.error(f"Celery Manhwa Task Error for {site_key}: {e}", exc_info=True)
+                await bot.edit_message_text(f"❌ An error occurred: {e}", chat_id=chat_id, message_id=status_message.message_id)
+            finally:
+                if driver: driver.quit()
+                if manhwa_folder.exists(): shutil.rmtree(manhwa_folder)
 
-    asyncio.run(_async_worker())
+    helpers.run_async_in_sync(_async_worker())

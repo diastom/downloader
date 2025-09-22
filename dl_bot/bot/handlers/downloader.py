@@ -8,9 +8,9 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import or_f
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...tasks import download_tasks
-from ...utils import helpers, database
-from ...utils.decorators import cooldown
+from dl_bot.tasks import download_tasks
+from dl_bot.utils import helpers, database
+from dl_bot.utils.decorators import cooldown
 
 logger = logging.getLogger(__name__)
 router = Router()
