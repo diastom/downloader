@@ -5,13 +5,13 @@ import tempfile
 
 from aiogram import Bot
 
-from dl_bot.config import settings
-from dl_bot.utils import database, helpers
-from dl_bot.utils.db_session import AsyncSessionLocal
-from dl_bot.tasks.celery_app import celery_app
-from dl_bot.utils.video_processor import get_video_metadata, apply_watermark_to_video
-from dl_bot.utils.telegram_api import upload_video
-from dl_bot.utils.telegram_client import get_or_create_personal_archive
+from ..config import settings
+from ..utils import database, helpers
+from ..utils.db_session import AsyncSessionLocal
+from .celery_app import celery_app
+from ..utils.video_processor import get_video_metadata, apply_watermark_to_video
+from ..utils.telegram_api import upload_video
+from ..utils.telegram_client import get_or_create_personal_archive
 
 logger = logging.getLogger(__name__)
 

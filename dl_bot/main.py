@@ -2,8 +2,9 @@ import asyncio
 import logging
 import sys
 
-from .core import setup_dispatcher
-from utils.helpers import check_dependencies
+from dl_bot.bot.core import setup_dispatcher, bot
+from dl_bot.utils.helpers import check_dependencies
+
 
 async def main():
     """

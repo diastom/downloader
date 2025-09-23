@@ -1,5 +1,5 @@
 from celery import Celery
-from dl_bot.config import settings
+from ..config import settings
 
 # Create the Celery application instance
 # The first argument is the name of the current module, which is important for Celery.

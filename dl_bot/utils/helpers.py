@@ -25,7 +25,7 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from dl_bot.utils import database
+from . import database
 
 logger = logging.getLogger(__name__)
 

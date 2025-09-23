@@ -5,7 +5,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from dl_bot.utils import database
+from ...utils import database
 
 router = Router()
 
