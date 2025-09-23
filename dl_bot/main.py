@@ -3,7 +3,7 @@ import logging
 import sys
 
 from bot.core import bot, setup_dispatcher
-from dlbot.utils.helpers import check_dependencies
+from utils.helpers import check_dependencies
 
 async def main():
     """
