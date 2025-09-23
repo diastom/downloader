@@ -5,8 +5,8 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from ...tasks import video_tasks # Import the task module
-from ...utils import database
+from tasks import video_tasks # Import the task module
+from utils import database
 
 logger = logging.getLogger(__name__)
 router = Router()

@@ -7,8 +7,8 @@ from telethon.tl.functions.channels import CreateChannelRequest, EditAdminReques
 from telethon.tl.types import ChatAdminRights, PeerChannel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..config import settings
-from . import database
+from config import settings
+from utils import database
 
 logger = logging.getLogger(__name__)
 

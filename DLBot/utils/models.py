@@ -10,7 +10,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 
-from .db_session import Base
+from utils.db_session import Base
 
 class User(Base):
     __tablename__ = "users"

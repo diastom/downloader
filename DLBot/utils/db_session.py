@@ -1,7 +1,7 @@
 from sqlalchemy.ext.asyncio import create_async_engine, sessionmaker, AsyncSession
 from sqlalchemy.orm import declarative_base
 
-from ..config import settings
+from config import settings
 
 # Create an asynchronous engine to connect to the PostgreSQL database
 engine = create_async_engine(
