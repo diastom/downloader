@@ -7,9 +7,9 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...config import settings
-from ...utils import database
-from ...utils.helpers import ALL_SUPPORTED_SITES
+from config import settings
+from utils import database
+from utils.helpers import ALL_SUPPORTED_SITES
 
 router = Router()
 router.message.filter(F.from_user.id.in_(settings.admin_ids))

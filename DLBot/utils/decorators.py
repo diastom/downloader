@@ -6,7 +6,7 @@ from aiogram import types
 from aiogram.dispatcher.handler import current_handler
 from aiogram.dispatcher.middlewares import BaseMiddleware
 
-from ..config import settings
+from config import settings
 
 # A dictionary to store the last time a user called a command
 user_cooldowns: Dict[int, float] = {}

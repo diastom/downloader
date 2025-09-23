@@ -3,9 +3,9 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from . import models
-from ..config import settings
-from .helpers import ALL_SUPPORTED_SITES
+from utils import models
+from config import settings
+from utils.helpers import ALL_SUPPORTED_SITES
 
 logger = logging.getLogger(__name__)
 

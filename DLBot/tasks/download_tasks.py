@@ -11,10 +11,10 @@ import concurrent.futures
 from aiogram import Bot
 from aiogram.types import FSInputFile
 
-from ..config import settings
-from ..utils import database, helpers, telegram_api, video_processor, telegram_client
-from ..utils.db_session import AsyncSessionLocal
-from .celery_app import celery_app
+from config import settings
+from utils import database, helpers, telegram_api, video_processor, telegram_client
+from utils.db_session import AsyncSessionLocal
+from tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
 
