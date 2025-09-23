@@ -1,4 +1,5 @@
 from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from config import settings
@@ -28,4 +29,4 @@ def setup_dispatcher() -> Dispatcher:
     return dp
 
 # Create a single bot instance to be used across the application
-bot = Bot(token=settings.bot_token, parse_mode="HTML")
+bot = Bot(token=settings.bot_token, default=DefaultBotProperties(parse_mode="HTML"))
