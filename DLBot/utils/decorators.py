@@ -3,8 +3,7 @@ from functools import wraps
 from typing import Dict, Any
 
 from aiogram import types
-from aiogram.dispatcher.handler import current_handler
-from aiogram.dispatcher.middlewares import BaseMiddleware
+from aiogram import BaseMiddleware
 
 from config import settings
 
