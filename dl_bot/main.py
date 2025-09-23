@@ -2,8 +2,8 @@ import asyncio
 import logging
 import sys
 
-from ..bot.core import bot, setup_dispatcher
-from ..utils.helpers import check_dependencies
+from .bot.core import bot, setup_dispatcher
+from .utils.helpers import check_dependencies
 
 async def main():
     """
