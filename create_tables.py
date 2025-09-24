@@ -15,9 +15,7 @@ async def create_db_tables():
     engine = create_async_engine(settings.database_url, echo=True)
 
     async with engine.begin() as conn:
-        print("Dropping all tables first...")
-        await conn.run_sync(Base.metadata.drop_all)
-        print("Creating all tables based on models...")
+        print("Creating all tables based on models (if they don't exist)...")
         await conn.run_sync(Base.metadata.create_all)
 
     print("Tables created successfully.")

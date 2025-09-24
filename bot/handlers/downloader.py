@@ -54,10 +54,10 @@ async def handle_link(message: types.Message, state: FSMContext, session: AsyncS
             )
             await message.answer("✅ ویدیو ارسال شد.", reply_markup=get_main_menu_keyboard())
             await state.set_state(UserFlow.main_menu)
-            return
+            return # CRITICAL FIX: Ensure we exit after successful forward.
         except Exception as e:
             logger.error(f"Failed to forward message from archive: {e}. Proceeding with re-download.")
-            await message.answer("خطایی در ارسال از آرشیو رخ داد. تلاش برای دانلود مجدد...")
+            await message.answer("خطایی در ارسال از آرشیو رخ داد. با این حال، ما دانلود مجدد را برای شما شروع می‌کنیم...")
 
     # --- Proceed with new download ---
     is_allowed, reason = await helpers.check_subscription(session, user_id, domain)
