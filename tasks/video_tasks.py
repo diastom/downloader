@@ -34,7 +34,11 @@ def encode_video_task(user_id: int, username: str, chat_id: int, video_file_id: 
                 await bot_instance.edit_message_text("📥 در حال دانلود ویدیوی اصلی...", chat_id=chat_id, message_id=status_message.message_id)
                 video_file = await bot_instance.get_file(video_file_id)
                 original_video_path = os.path.join(temp_dir, video_filename)
-                await bot_instance.download_file(video_file.file_path, destination=original_video_path)
+
+                # FIX: Clean up the file path from a local Bot API server
+                clean_file_path = video_file.file_path.lstrip('/')
+
+                await bot_instance.download_file(clean_file_path, destination=original_video_path)
 
                 final_video_path = original_video_path
                 custom_thumb_path = None
@@ -64,7 +68,11 @@ def encode_video_task(user_id: int, username: str, chat_id: int, video_file_id: 
                         await bot_instance.edit_message_text("🖼️ در حال آماده‌سازی تامبنیل...", chat_id=chat_id, message_id=status_message.message_id)
                         thumb_file = await bot_instance.get_file(thumbnail_id)
                         custom_thumb_path = os.path.join(temp_dir, f"thumb_{user_id}.jpg")
-                        await bot_instance.download_file(thumb_file.file_path, destination=custom_thumb_path)
+
+                        # FIX: Clean up the file path from a local Bot API server
+                        clean_thumb_path = thumb_file.file_path.lstrip('/')
+
+                        await bot_instance.download_file(clean_thumb_path, destination=custom_thumb_path)
                         applied_tasks.append("thumb")
 
                 # 4. Upload the processed video back to the user
