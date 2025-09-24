@@ -1,6 +1,9 @@
 # Environment variables
 .env
 
+# Local directories
+/encode/
+
 # Python
 __pycache__/
 *.pyc
