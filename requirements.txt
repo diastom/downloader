@@ -6,7 +6,6 @@ requests
 beautifulsoup4
 selenium
 webdriver-manager
-telethon
 pydantic-settings
 ffmpeg-python
 sqlalchemy[asyncio]

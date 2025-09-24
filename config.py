@@ -8,13 +8,10 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file='.env', env_file_encoding='utf-8')
 
     bot_token: str
-    api_id: int
-    api_hash: str
-    
-    # We now only use the session string.
-    session_string: str
-    
-    public_archive_chat_id: int
+
+    public_archive_channel_id: int
+    private_archive_channel_id: int # New: For encoded videos
+
     redis_url: str = "redis://localhost:6379/0"
     admin_ids_str: str
     database_url: str = "postgresql+asyncpg://user:password@localhost:5432/dlbot_db"
