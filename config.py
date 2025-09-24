@@ -9,6 +9,9 @@ class Settings(BaseSettings):
 
     bot_token: str
 
+    # Optional: For local Bot API server setups
+    local_bot_api_server_data_dir: str | None = None
+
     public_archive_channel_id: int
     private_archive_channel_id: int # New: For encoded videos
 
