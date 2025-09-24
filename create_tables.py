@@ -4,21 +4,22 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from config import settings
 from utils.db_session import Base
 
-# تمام مدل‌های خود را اینجا وارد کنید تا SQLAlchemy آنها را شناسایی کند
-from utils.models import User, Thumbnail, WatermarkSetting, VideoCache, BotText
+# All your models need to be imported here for SQLAlchemy to see them
+from utils.models import User, Thumbnail, WatermarkSetting, UrlCache, PublicArchive, BotText
 
 async def create_db_tables():
     """
-    متصل به دیتابیس شده و جداول تعریف شده در مدل‌ها را ایجاد می‌کند.
+    Connects to the database and creates tables defined in the models.
     """
     print("Connecting to the database...")
-    # از نام متغیر صحیح که در config.py شما وجود دارد استفاده می‌کنیم
-    engine = create_async_engine(settings.database_url, echo=True) # <<-- تغییر در این خط بود
+    engine = create_async_engine(settings.database_url, echo=True)
 
     async with engine.begin() as conn:
+        print("Dropping all tables first...")
+        await conn.run_sync(Base.metadata.drop_all)
         print("Creating all tables based on models...")
         await conn.run_sync(Base.metadata.create_all)
-    
+
     print("Tables created successfully.")
     await engine.dispose()
 

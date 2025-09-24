@@ -1,3 +1,4 @@
+import hashlib
 from sqlalchemy import (
     Column,
     Integer,
@@ -25,18 +26,13 @@ class User(Base):
     sub_is_active = Column(Boolean, default=False)
     sub_expiry_date = Column(DateTime, nullable=True)
     sub_download_limit = Column(Integer, default=-1)
+    sub_allowed_sites = Column(JSONB)
 
-    # --- START OF CORRECTION ---
-    # Kept the original column for site access
-    sub_allowed_sites = Column(JSONB) 
-    
-    # Added new, separate boolean flags for feature access
     allow_thumbnail = Column(Boolean, default=True, nullable=False)
     allow_watermark = Column(Boolean, default=True, nullable=False)
-    # --- END OF CORRECTION ---
 
     stats_site_usage = Column(JSONB)
-    personal_archive_id = Column(BigInteger, nullable=True)
+    # personal_archive_id is removed
 
     # Relationships
     thumbnail = relationship("Thumbnail", back_populates="user", uselist=False)
@@ -68,8 +64,9 @@ class WatermarkSetting(Base):
     user = relationship("User", back_populates="watermark")
 
 
-class VideoCache(Base):
-    __tablename__ = "video_cache"
+class UrlCache(Base):
+    """ Caches information about a specific video URL and format. """
+    __tablename__ = "url_cache" # Renamed from video_cache
     __table_args__ = {"schema": "public"}
 
     id = Column(Integer, primary_key=True)
@@ -78,9 +75,24 @@ class VideoCache(Base):
     message_id = Column(BigInteger, nullable=True)
 
 
+class PublicArchive(Base):
+    """ Stores a record of a downloaded video to prevent duplicates. """
+    __tablename__ = "public_archive"
+    __table_args__ = {"schema": "public"}
+
+    id = Column(Integer, primary_key=True)
+    url_hash = Column(String, unique=True, index=True, nullable=False)
+    message_id = Column(BigInteger, nullable=False)
+    channel_id = Column(BigInteger, nullable=False)
+
+    @staticmethod
+    def create_hash(url: str) -> str:
+        """Creates a SHA256 hash of a given URL."""
+        return hashlib.sha256(url.encode('utf-8')).hexdigest()
+
+
 class BotText(Base):
     __tablename__ = "bot_texts"
     __table_args__ = {"schema": "public"}
     key = Column(String, primary_key=True, index=True)
     value = Column(String, nullable=False)
-
