@@ -160,7 +160,7 @@ def process_gallery_dl_task(chat_id: int, url: str, create_zip: bool, user_id: i
                             await bot.send_photo(chat_id=chat_id, photo=FSInputFile(file_path), caption=filename)
                         elif ext in ['.mp4', '.mkv', '.webm', '.mov']:
                             try:
-                                with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as temp_vid:
+                                with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False, dir=tempfile.gettempdir()) as temp_vid:
                                     shutil.move(file_path, temp_vid.name)
                                     download_video_task.delay(
                                         chat_id=chat_id,
