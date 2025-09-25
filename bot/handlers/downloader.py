@@ -94,7 +94,7 @@ async def handle_yt_dlp_link(message: types.Message, state: FSMContext, url: str
     if not formats:
         await status_msg.edit_text("No downloadable video qualities found.")
         return
-    best_formats = {f['height']: f for f in sorted(formats, key=lambda x: x.get('tbr', 0), reverse=True) if f.get('height')}
+    best_formats = {f['height']: f for f in sorted(formats, key=lambda x: x.get('tbr') or 0, reverse=True) if f.get('height')}
     await state.set_state(DownloadFSM.yt_dlp_selecting_quality)
     await state.update_data(yt_info=info, yt_url=url, user_id=message.from_user.id)
     keyboard = [[types.InlineKeyboardButton(text=f"{h}p ({(f.get('filesize') or f.get('filesize_approx') or 0) / (1024*1024):.2f} MB)", callback_data=f"yt_{f['format_id']}")] for h, f in sorted(best_formats.items(), reverse=True)]
