@@ -7,7 +7,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from bot.handlers.common import UserFlow, get_main_menu_keyboard
+from bot.handlers.common import UserFlow, get_task_done_keyboard
 from tasks import download_tasks
 from utils import helpers, database
 from utils.decorators import cooldown
@@ -66,6 +66,11 @@ async def handle_link(message: types.Message, state: FSMContext, session: AsyncS
             await message.answer("This video has been downloaded before. Forwarding it to you...")
             try:
                 await bot.copy_message(chat_id=user_id, from_chat_id=archived_item.channel_id, message_id=archived_item.message_id)
+                await bot.send_message(
+                    chat_id=user_id,
+                    text="تسک شما انجام شد ✅",
+                    reply_markup=get_task_done_keyboard()
+                )
                 return
             except Exception as e:
                 logger.error(f"Failed to forward message from archive: {e}. Proceeding with re-download.")
