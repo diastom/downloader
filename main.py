@@ -5,7 +5,7 @@ import sys
 from bot.core import setup_dispatcher
 from utils.bot_instance import create_bot_instance
 from utils.helpers import check_dependencies
-from utils.db_session import engine
+from utils.db_session import engine, initialize_database
 from utils.models import Base
 
 async def init_database():
@@ -33,6 +33,8 @@ async def main():
         sys.exit(1)
 
     logger.info("Initializing database...")
+    # Initialize the engine and session factory before using them.
+    initialize_database()
     await init_database()
 
     bot = create_bot_instance()
