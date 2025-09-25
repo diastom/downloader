@@ -36,17 +36,11 @@ logger = logging.getLogger(__name__)
 # --- Async Runner (FIXED) ---
 def run_async_in_sync(coro: Coroutine):
     """
-    Safely runs an async coroutine from a synchronous context like Celery.
-    It gets the current running loop or creates a new one if none exists
-    for the current OS thread. This approach is crucial for Celery workers
-    where the same process handles multiple tasks sequentially.
+    Safely runs an async coroutine from a synchronous context like Celery by
+    creating a new event loop for each execution. This is the most robust way
+    to prevent "Future attached to a different loop" errors.
     """
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:  # 'RuntimeError: There is no current event loop...'
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    return loop.run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 # --- Domain Constants ---
