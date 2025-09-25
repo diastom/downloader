@@ -15,7 +15,7 @@ from config import settings
 from utils import database, helpers, telegram_api, video_processor
 from utils.db_session import AsyncSessionLocal
 from tasks.celery_app import celery_app
-from bot.handlers.common import get_main_menu_keyboard
+from bot.handlers.common import get_task_done_keyboard
 from utils.models import PublicArchive
 
 logger = logging.getLogger(__name__)
@@ -72,10 +72,16 @@ def download_video_task(chat_id: int, url: str, selected_format: str, video_info
 
                 if status_message: await bot_instance.edit_message_text(text="📨 Sending to you...", chat_id=chat_id, message_id=status_message.message_id)
 
-                reply_markup = get_main_menu_keyboard() if send_completion_message else None
-                await bot_instance.copy_message(chat_id=chat_id, from_chat_id=public_channel_id, message_id=public_message_id, reply_markup=reply_markup)
+                await bot_instance.copy_message(chat_id=chat_id, from_chat_id=public_channel_id, message_id=public_message_id)
 
                 if status_message: await bot_instance.delete_message(chat_id=chat_id, message_id=status_message.message_id)
+
+                if send_completion_message:
+                    await bot_instance.send_message(
+                        chat_id=chat_id,
+                        text="تسک شما انجام شد ✅",
+                        reply_markup=get_task_done_keyboard()
+                    )
 
         except Exception as e:
             logger.error(f"Celery Video Task Error: {e}", exc_info=True)
