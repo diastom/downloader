@@ -10,11 +10,8 @@ def create_bot_instance():
     This factory should be called within each async task to ensure session isolation.
     """
     # آدرس سرور محلی را مشخص کنید
-    # Define the data directory from settings
-    data_dir = settings.local_bot_api_server_data_dir if settings.local_bot_api_enabled else None
-
     local_api_server = TelegramAPIServer.from_base(
-        'http://91.107.146.233:8081', is_local=True, data_dir=data_dir
+        'http://91.107.146.233:8081', is_local=True
     )
 
     # یک session جدید با timeout بسیار بالا (مثلاً ۳۰ دقیقه) بسازید
@@ -25,6 +22,3 @@ def create_bot_instance():
 
     # یک نمونه bot جدید با این session بسازید
     return Bot(token=settings.bot_token, session=session, default=DefaultBotProperties(parse_mode='HTML'))
-
-# The global bot instance is removed to prevent sharing across tasks.
-# bot = Bot(token=settings.bot_token, session=session, default=DefaultBotProperties(parse_mode='HTML'))

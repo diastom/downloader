@@ -1,6 +1,5 @@
-from aiogram import Dispatcher
+from aiogram import Dispatcher, Bot
 from aiogram.fsm.storage.memory import MemoryStorage
-from config import settings
 from utils.db_session import AsyncSessionLocal
 from bot.handlers import admin, common, downloader, settings as user_settings, video
 from bot.middlewares import DbSessionMiddleware
@@ -25,5 +24,3 @@ def setup_dispatcher() -> Dispatcher:
     dp.include_router(downloader.router) # This should be last as it has a broad regex
 
     return dp
-
-

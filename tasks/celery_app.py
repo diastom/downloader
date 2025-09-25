@@ -1,5 +1,10 @@
 from celery import Celery
+from dotenv import load_dotenv
 from config import settings
+
+# Load environment variables from .env file for Celery workers
+# This is crucial for ensuring workers have access to the same settings as the main app.
+load_dotenv()
 
 # Create the Celery application instance
 celery_app = Celery(
