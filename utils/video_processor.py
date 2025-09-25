@@ -45,8 +45,7 @@ def apply_watermark_to_video(
     settings: WatermarkSetting
 ) -> bool:
     """
-    Applies a watermark to a video based on the WatermarkSetting ORM object.
-    Returns True on success, False on failure.
+    Applies a watermark to a video using ffmpeg-python.
     This is a blocking function and should be run in a thread.
     """
     if not settings.enabled or not settings.text:
@@ -65,41 +64,26 @@ def apply_watermark_to_video(
     }
     position = position_map.get(settings.position, "top_left")
 
-    escaped_text = settings.text.replace("'", "'\\''").replace(":", "\\:").replace("\\", "\\\\")
-    escaped_font_path = FONT_FILE.replace('\\', '/').replace(':', '\\:')
-
-    video_filter = (
-        f"drawtext=fontfile='{escaped_font_path}':"
-        f"text='{escaped_text}':"
-        f"fontcolor={settings.color}:fontsize={settings.size}:"
-        f"{position}:"
-        f"borderw={settings.stroke}:bordercolor=black@0.6"
-    )
-
-    command = [
-        'ffmpeg', '-y',
-        '-i', input_path,
-        '-vf', video_filter,
-        '-c:v', 'libx264',
-        '-preset', 'veryfast',
-        '-crf', '25',
-        '-c:a', 'copy',
-        output_path
-    ]
-
-    logger.info("Running FFmpeg watermark command: %s", shlex.join(command))
-
     try:
-        result = subprocess.run(command, capture_output=True, text=True, check=False)
-        if result.returncode != 0:
-            logger.error(f"Error in FFmpeg during watermarking: {result.stderr}")
-            return False
-
+        logger.info(f"Applying watermark to {input_path}...")
+        (
+            ffmpeg
+            .input(input_path)
+            .output(
+                output_path,
+                vf=f"drawtext=fontfile='{FONT_FILE}':text='{settings.text}':fontcolor={settings.color}:fontsize={settings.size}:{position}:borderw={settings.stroke}:bordercolor=black@0.6",
+                c_v='libx264',
+                preset='fast',
+                crf=25,
+                c_a='copy'
+            )
+            .overwrite_output()
+            .run(capture_stdout=True, capture_stderr=True)
+        )
         logger.info(f"Watermark applied successfully to {output_path}")
         return True
-
-    except Exception as e:
-        logger.error(f"An unexpected error occurred while running ffmpeg for watermarking: {e}", exc_info=True)
+    except ffmpeg.Error as e:
+        logger.error(f"Error applying watermark: {e.stderr.decode()}", exc_info=True)
         return False
 
 
@@ -132,4 +116,23 @@ def repair_video(initial_path: str, repaired_path: str) -> bool:
     except ffmpeg.Error as e:
         error_message = e.stderr.decode() if e.stderr else "No stderr output"
         logger.error(f"[ffmpeg] Error during stream copy: {error_message}")
+        return False
+
+def transcode_video(input_path: str, output_path: str, height: int) -> bool:
+    """
+    Transcodes a video to a specific height, preserving aspect ratio.
+    """
+    logger.info(f"[ffmpeg] Transcoding video to {height}p...")
+    try:
+        (
+            ffmpeg
+            .input(input_path)
+            .output(output_path, vf=f'scale=-2:{height}', preset='fast', crf=24)
+            .overwrite_output()
+            .run(capture_stdout=True, capture_stderr=True)
+        )
+        logger.info(f"Video successfully transcoded to {output_path}")
+        return True
+    except ffmpeg.Error as e:
+        logger.error(f"Error during transcoding: {e.stderr.decode()}", exc_info=True)
         return False
