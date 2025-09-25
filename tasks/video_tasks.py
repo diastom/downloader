@@ -19,32 +19,6 @@ from utils.bot_instance import bot
 def get_bot_instance():
     return bot
 
-async def download_or_copy_file(file: File, destination: Path):
-    """
-    Downloads a file using the standard method or copies it directly if a local
-    Bot API server data directory is configured.
-    """
-    bot_instance = get_bot_instance()
-    if settings.local_bot_api_enabled and settings.local_bot_api_server_data_dir:
-        # This path is relative to the Bot API server's data directory
-        source_path = Path(settings.local_bot_api_server_data_dir) / file.file_path
-        logger.info(f"Local Bot API enabled. Attempting to copy from {source_path}")
-        if source_path.exists():
-            shutil.copy(source_path, destination)
-            return
-
-        # Fallback for cases where the path might be absolute
-        alt_source_path = Path(file.file_path)
-        logger.info(f"Primary path failed. Attempting to copy from fallback path {alt_source_path}")
-        if alt_source_path.exists():
-            shutil.copy(alt_source_path, destination)
-            return
-
-        raise FileNotFoundError(f"Source file not found at primary path {source_path} or fallback {alt_source_path}.")
-    else:
-        logger.info(f"Default Telegram API. Downloading file to {destination}")
-        await bot_instance.download_file(file.file_path, destination=str(destination))
-
 @celery_app.task(name="tasks.encode_video_task")
 def encode_video_task(user_id: int, username: str, chat_id: int, video_file_id: str, options: dict, new_filename: str | None):
     """
@@ -64,7 +38,7 @@ def encode_video_task(user_id: int, username: str, chat_id: int, video_file_id: 
             original_video_path = task_dir / final_filename
 
             await bot_instance.edit_message_text("📥 در حال دریافت ویدیوی اصلی...", chat_id=chat_id, message_id=status_message.message_id)
-            await download_or_copy_file(video_file, original_video_path)
+            await helpers.download_or_copy_file(bot_instance, video_file, original_video_path)
 
             final_video_path = original_video_path
             custom_thumb_path = None
@@ -90,7 +64,7 @@ def encode_video_task(user_id: int, username: str, chat_id: int, video_file_id: 
                         await bot_instance.edit_message_text("🖼️ در حال دریافت تامبنیل...", chat_id=chat_id, message_id=status_message.message_id)
                         thumb_file = await bot_instance.get_file(thumbnail_id)
                         custom_thumb_path = task_dir / f"thumb_{user_id}.jpg"
-                        await download_or_copy_file(thumb_file, custom_thumb_path)
+                        await helpers.download_or_copy_file(bot_instance, thumb_file, custom_thumb_path)
                         applied_tasks.append("thumb")
 
             await bot_instance.edit_message_text("📤 در حال آپلود ویدیوی نهایی...", chat_id=chat_id, message_id=status_message.message_id)
@@ -105,9 +79,10 @@ def encode_video_task(user_id: int, username: str, chat_id: int, video_file_id: 
                 reply_markup=get_main_menu_keyboard()
             )
 
+            # Use the new personal_archive_channel_id from settings
             private_archive_caption = f"the user: @{username} | {user_id}\n" f"the task: {'/'.join(applied_tasks) or 'none'}"
             await telegram_api.upload_video(
-                bot=bot_instance, target_chat_id=settings.private_archive_channel_id, file_path=str(final_video_path),
+                bot=bot_instance, target_chat_id=settings.personal_archive_channel_id, file_path=str(final_video_path),
                 thumb_path=str(custom_thumb_path) if custom_thumb_path and custom_thumb_path.exists() else None,
                 caption=private_archive_caption,
                 duration=duration, width=width, height=height

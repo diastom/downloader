@@ -181,6 +181,29 @@ async def run_gallery_dl_download(url: str, temp_dir: str) -> Tuple[List[str] | 
         return None, error_message
     return [os.path.join(root, file) for root, _, files in os.walk(temp_dir) for file in files], None
 
+async def download_or_copy_file(bot, file: "File", destination: Path):
+    """
+    Downloads a file using the standard method or copies it directly if a local
+    Bot API server data directory is configured.
+    """
+    from config import settings
+
+    if settings.local_bot_api_enabled and settings.local_bot_api_server_data_dir:
+        source_path = Path(file.file_path)
+        # If the provided path is not absolute, join it with the base data directory
+        if not source_path.is_absolute():
+            source_path = Path(settings.local_bot_api_server_data_dir) / source_path
+
+        logger.info(f"Local Bot API enabled. Attempting to copy from {source_path}")
+        if source_path.exists():
+            shutil.copy(source_path, destination)
+            return
+
+        raise FileNotFoundError(f"Source file not found at {source_path}. Check your local_bot_api_server_data_dir and file path.")
+    else:
+        logger.info(f"Default Telegram API. Downloading file to {destination}")
+        await bot.download_file(file.file_path, destination=str(destination))
+
 def download_single_image(args: Tuple[str, str, dict]) -> bool:
     img_url, file_path, headers = args
     try:
