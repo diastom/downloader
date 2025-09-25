@@ -17,6 +17,7 @@ class EncodeFSM(StatesGroup):
     choosing_options = State()
     awaiting_new_name = State()
     choosing_quality = State()
+    choosing_thumbnail = State()
 
 # --- Helper Functions ---
 
@@ -36,6 +37,9 @@ async def get_encode_panel(state: FSMContext) -> tuple[str, InlineKeyboardMarkup
         f"🔹 **کیفیت خروجی:** `{quality_text}`\n\n"
         "با کلیک روی دکمه‌ها، گزینه‌های مورد نظر را فعال/غیرفعال کنید و سپس 'شروع عملیات' را بزنید."
     )
+
+    if options.get("thumb") and options.get("thumb_index"):
+        panel_text += f"\n🖼️ تامبنیل انتخاب شده: شماره {options['thumb_index']}"
 
     rename_check = "✅" if options.get("rename") else "❌"
     thumb_check = "✅" if options.get("thumb") else "❌"
@@ -130,6 +134,35 @@ async def handle_toggle_option(query: types.CallbackQuery, state: FSMContext, se
     data = await state.get_data()
     options = data.get("options", {})
     options[action] = not options.get(action, False)
+
+    if action == "thumb":
+        if options[action]:
+            thumbnails = await database.get_user_thumbnails(session, user_id)
+            if not thumbnails:
+                options[action] = False
+                await query.answer("ابتدا باید با /thumb حداقل یک تامبنیل تنظیم کنید.", show_alert=True)
+            elif len(thumbnails) == 1:
+                options["thumb_id"] = thumbnails[0].id
+                options["thumb_index"] = 1
+                await query.answer("تامبنیل شما فعال شد.")
+            else:
+                await state.update_data(options=options)
+                await state.set_state(EncodeFSM.choosing_thumbnail)
+                buttons = [
+                    [InlineKeyboardButton(text=f"تامبنیل {idx + 1}", callback_data=f"enc_thumb_{thumb.id}")]
+                    for idx, thumb in enumerate(thumbnails)
+                ]
+                buttons.append([InlineKeyboardButton(text="🔙 بازگشت", callback_data="enc_thumb_back")])
+                await query.message.edit_text(
+                    "لطفاً یکی از تامبنیل‌های خود را برای اعمال انتخاب کنید:",
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+                )
+                await query.answer("یک تامبنیل انتخاب کنید.")
+                return
+        else:
+            options.pop("thumb_id", None)
+            options.pop("thumb_index", None)
+
     await state.update_data(options=options)
 
     if action == "rename" and options[action]:
@@ -138,7 +171,8 @@ async def handle_toggle_option(query: types.CallbackQuery, state: FSMContext, se
     else:
         panel_text, keyboard = await get_encode_panel(state)
         await query.message.edit_text(panel_text, reply_markup=keyboard)
-    await query.answer()
+    if action != "thumb" or not options[action]:
+        await query.answer()
 
 @router.callback_query(EncodeFSM.choosing_options, F.data == "enc_start")
 async def handle_start_button(query: types.CallbackQuery, state: FSMContext, session: AsyncSession):
@@ -149,6 +183,10 @@ async def handle_start_button(query: types.CallbackQuery, state: FSMContext, ses
 
     if options.get("thumb") and not await database.get_user_thumbnail(session, user_id):
         await query.answer("خطا: شما اعمال تامبنیل را انتخاب کرده‌اید اما تامبنیلی تنظیم نکرده‌اید. لطفاً با /thumb تنظیم کنید و دوباره امتحان کنید.", show_alert=True)
+        return
+
+    if options.get("thumb") and not options.get("thumb_id"):
+        await query.answer("لطفاً یکی از تامبنیل‌های خود را انتخاب کنید.", show_alert=True)
         return
 
     watermark_settings = await database.get_user_watermark_settings(session, user_id)
@@ -166,6 +204,54 @@ async def handle_start_button(query: types.CallbackQuery, state: FSMContext, ses
         new_filename=data.get('filename')
     )
     await state.clear()
+
+
+@router.callback_query(EncodeFSM.choosing_thumbnail, F.data == "enc_thumb_back")
+async def handle_thumbnail_back(query: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    options = data.get("options", {})
+    options["thumb"] = False
+    options.pop("thumb_id", None)
+    options.pop("thumb_index", None)
+    await state.update_data(options=options)
+
+    await state.set_state(EncodeFSM.choosing_options)
+    panel_text, keyboard = await get_encode_panel(state)
+    await query.message.edit_text(panel_text, reply_markup=keyboard)
+    await query.answer("انتخاب تامبنیل لغو شد.")
+
+
+@router.callback_query(EncodeFSM.choosing_thumbnail, F.data.startswith("enc_thumb_"))
+async def handle_thumbnail_selected(query: types.CallbackQuery, state: FSMContext, session: AsyncSession):
+    thumb_id_str = query.data.replace("enc_thumb_", "")
+    try:
+        thumb_id = int(thumb_id_str)
+    except ValueError:
+        await query.answer("شناسه تامبنیل نامعتبر است.", show_alert=True)
+        return
+
+    thumbnails = await database.get_user_thumbnails(session, query.from_user.id)
+    index = None
+    for idx, thumb in enumerate(thumbnails, start=1):
+        if thumb.id == thumb_id:
+            index = idx
+            break
+
+    if index is None:
+        await query.answer("این تامبنیل موجود نیست یا حذف شده است.", show_alert=True)
+        return
+
+    data = await state.get_data()
+    options = data.get("options", {})
+    options["thumb"] = True
+    options["thumb_id"] = thumb_id
+    options["thumb_index"] = index
+    await state.update_data(options=options)
+
+    await state.set_state(EncodeFSM.choosing_options)
+    panel_text, keyboard = await get_encode_panel(state)
+    await query.message.edit_text(panel_text, reply_markup=keyboard)
+    await query.answer("تامبنیل انتخاب شد.")
 
 @router.message(EncodeFSM.awaiting_new_name, F.text)
 async def receive_new_filename(message: types.Message, state: FSMContext):

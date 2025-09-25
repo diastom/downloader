@@ -68,9 +68,10 @@ def encode_video_task(user_id: int, username: str, chat_id: int, video_file_id: 
                         final_video_path = watermarked_path
                         applied_tasks.append("water")
 
-            if options.get("thumb"):
+            if options.get("thumb") and options.get("thumb_id"):
                 async with AsyncSessionLocal() as session:
-                    thumbnail_id = await database.get_user_thumbnail(session, user_id)
+                    thumbnail = await database.get_user_thumbnail_by_id(session, user_id, options["thumb_id"])
+                thumbnail_id = thumbnail.file_id if thumbnail else None
                 if thumbnail_id:
                     await bot.edit_message_text("🖼️ در حال دریافت تامبنیل...", chat_id=chat_id, message_id=status_message.message_id)
                     thumb_file = await bot.get_file(thumbnail_id)
