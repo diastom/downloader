@@ -100,7 +100,6 @@ async def auto_start_download(message: types.Message, state: FSMContext, session
     await _process_download_link(message, state, session, bot)
 
 
-async def handle_yt_dlp_link(message: types.Message, state: FSMContext, url: str, domain: str):
     status_msg = await message.answer("🔎 Extracting video information...")
     info = await asyncio.to_thread(helpers.get_full_video_info, url)
     if not info:
@@ -132,9 +131,7 @@ async def handle_yt_dlp_link(message: types.Message, state: FSMContext, url: str
         chat_id=message.chat.id,
         url=url,
         selected_format=format_id,
-        video_info_json=json.dumps(info),
-        user_id=message.from_user.id,
-        source_domain=domain,
+        video_info_json=json.dumps(info)
     )
     await state.clear()
 
