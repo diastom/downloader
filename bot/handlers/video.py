@@ -47,8 +47,6 @@ async def get_encode_panel(state: FSMContext) -> tuple[str, InlineKeyboardMarkup
         "با دکمه‌های زیر می‌توانید هر گزینه را فعال یا غیرفعال کنید و در پایان «شروع عملیات» را بزنید."
     )
 
-    panel_text = "\n".join(panel_lines)
-
     rename_check = "✅" if options.get("rename") else "❌"
     thumb_check = "✅" if options.get("thumb") else "❌"
     water_check = "✅" if options.get("water") else "❌"
