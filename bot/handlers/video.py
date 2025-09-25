@@ -1,6 +1,7 @@
 import logging
 from pathlib import Path
 from aiogram import Router, types, F
+from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,16 +31,21 @@ async def get_encode_panel(state: FSMContext) -> tuple[str, InlineKeyboardMarkup
     selected_quality = options.get('selected_quality', 'original')
     quality_text = f"{selected_quality}p" if selected_quality != 'original' else "Original"
 
-    panel_text = (
-        f"🎬 **پنل تنظیمات انکد**\n\n"
-        f"🔹 **نام فایل:** `{data.get('filename')}`\n"
-        f"🔹 **حجم تقریبی:** `{size_mb:.2f} MB`\n"
-        f"🔹 **کیفیت خروجی:** `{quality_text}`\n\n"
-        "با کلیک روی دکمه‌ها، گزینه‌های مورد نظر را فعال/غیرفعال کنید و سپس 'شروع عملیات' را بزنید."
-    )
+    panel_lines = [
+        "🎬 پنل تنظیمات انکد",
+        "────────────────────",
+        f"• نام فایل: `{data.get('filename')}`",
+        f"• حجم تقریبی: `{size_mb:.2f} MB`",
+        f"• کیفیت خروجی: `{quality_text}`",
+    ]
 
     if options.get("thumb") and options.get("thumb_index"):
-        panel_text += f"\n🖼️ تامبنیل انتخاب شده: شماره {options['thumb_index']}"
+        panel_lines.append(f"🖼️ تامبنیل انتخاب شده: شماره {options['thumb_index']}")
+
+    panel_lines.append("")
+    panel_lines.append(
+        "با دکمه‌های زیر می‌توانید هر گزینه را فعال یا غیرفعال کنید و در پایان «شروع عملیات» را بزنید."
+    )
 
     rename_check = "✅" if options.get("rename") else "❌"
     thumb_check = "✅" if options.get("thumb") else "❌"
@@ -100,9 +106,7 @@ async def handle_set_quality(query: types.CallbackQuery, state: FSMContext):
     await query.message.edit_text(panel_text, reply_markup=keyboard)
     await query.answer(f"کیفیت خروجی روی {action}p تنظیم شد.")
 
-@router.message(UserFlow.encoding, F.video)
-async def handle_encode_video_entry(message: types.Message, state: FSMContext):
-    """Entry point for the advanced encoding panel."""
+async def _enter_encode_panel(message: types.Message, state: FSMContext):
     await state.set_state(EncodeFSM.choosing_options)
     initial_data = {
         "video_file_id": message.video.file_id,
@@ -114,6 +118,19 @@ async def handle_encode_video_entry(message: types.Message, state: FSMContext):
     await state.update_data(**initial_data)
     panel_text, keyboard = await get_encode_panel(state)
     await message.answer(panel_text, reply_markup=keyboard)
+
+
+@router.message(StateFilter(UserFlow.encoding), F.video)
+async def handle_encode_video_entry(message: types.Message, state: FSMContext):
+    """Entry point for the advanced encoding panel when the user is already in encode mode."""
+    await _enter_encode_panel(message, state)
+
+
+@router.message(StateFilter(None, UserFlow.main_menu, UserFlow.downloading), F.video)
+async def auto_start_encode(message: types.Message, state: FSMContext):
+    """Automatically switches to encode mode when a video is received."""
+    await state.set_state(UserFlow.encoding)
+    await _enter_encode_panel(message, state)
 
 @router.callback_query(EncodeFSM.choosing_options, F.data.startswith("enc_toggle_"))
 async def handle_toggle_option(query: types.CallbackQuery, state: FSMContext, session: AsyncSession):
