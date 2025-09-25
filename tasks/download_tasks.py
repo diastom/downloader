@@ -168,11 +168,19 @@ def process_erome_album_task(chat_id: int, user_id: int, album_title: str, media
                     )
                     for vid_url in videos_to_dl:
                         download_video_task.delay(
+
                             chat_id,
                             vid_url,
                             'best',
                             '{}',
                             user_id,
+
+                            chat_id=chat_id,
+                            url=vid_url,
+                            selected_format='best',
+                            video_info_json='{}',
+                            user_id=user_id,
+
                             send_completion_message=False,
                             source_domain='erome.com',
                         )
@@ -241,11 +249,19 @@ def process_gallery_dl_task(chat_id: int, url: str, create_zip: bool, user_id: i
                                 with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False, dir=tempfile.gettempdir()) as temp_vid:
                                     shutil.move(file_path, temp_vid.name)
                                     download_video_task.delay(
+
                                         chat_id,
                                         f"file://{temp_vid.name}",
                                         'best',
                                         f'{{"title": "{filename}"}}',
                                         user_id,
+
+                                        chat_id=chat_id,
+                                        url=f"file://{temp_vid.name}",
+                                        selected_format='best',
+                                        video_info_json=f'{{"title": "{filename}"}}',
+                                        user_id=user_id,
+
                                         send_completion_message=False,
                                         source_domain=domain_name,
                                     )

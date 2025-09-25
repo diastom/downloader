@@ -100,7 +100,14 @@ async def auto_start_download(message: types.Message, state: FSMContext, session
     await _process_download_link(message, state, session, bot)
 
 
+
 async def handle_yt_dlp_link(message: types.Message, state: FSMContext, url: str, domain: str):
+
+
+async def handle_yt_dlp_link(message: types.Message, state: FSMContext, url: str, domain: str):
+
+
+
     status_msg = await message.answer("🔎 Extracting video information...")
     info = await asyncio.to_thread(helpers.get_full_video_info, url)
     if not info:
@@ -131,6 +138,7 @@ async def handle_yt_dlp_link(message: types.Message, state: FSMContext, url: str
     if not formats:
         await status_msg.edit_text("No downloadable video qualities found.")
         return
+
     best_format = max(formats, key=_format_sort_key)
     height = best_format.get('height')
     size_raw = best_format.get('filesize') or best_format.get('filesize_approx') or 0
@@ -138,6 +146,16 @@ async def handle_yt_dlp_link(message: types.Message, state: FSMContext, url: str
         approx_size = int(size_raw) / (1024 * 1024)
     except (TypeError, ValueError):
         approx_size = 0
+
+
+    best_format = max(
+        formats,
+        key=lambda f: ((f.get('height') or 0), (f.get('tbr') or 0), (f.get('filesize') or f.get('filesize_approx') or 0))
+    )
+    height = best_format.get('height')
+    approx_size = (best_format.get('filesize') or best_format.get('filesize_approx') or 0) / (1024 * 1024)
+
+
     format_id = best_format.get('format_id')
     if not format_id:
         await status_msg.edit_text("❌ Error: Could not determine the best quality format.")
@@ -151,12 +169,18 @@ async def handle_yt_dlp_link(message: types.Message, state: FSMContext, url: str
         "درخواست شما به صف دانلود اضافه شد."
     )
     download_tasks.download_video_task.delay(
+
         message.chat.id,
         url,
         format_id,
         json.dumps(info),
         message.from_user.id,
         source_domain=domain,
+
+        chat_id=message.chat.id,
+        url=url,
+        selected_format=format_id,
+
     )
     await state.clear()
 
