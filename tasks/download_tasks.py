@@ -34,6 +34,7 @@ def download_video_task(
     video_info = json.loads(video_info_json) if video_info_json else {}
 
     async def _async_worker():
+        bot = None
         bot = create_bot_instance()
         status_message = await bot.send_message(chat_id=chat_id, text="📥 Your video download is starting...") if send_completion_message else None
 
@@ -62,8 +63,10 @@ def download_video_task(
                 if not raw_video_path or not os.path.exists(raw_video_path): raise Exception("Video download failed or file not found.")
 
                 repaired_path = os.path.join(temp_dir, "repaired.mp4")
+                final_video_path = repaired_path
                 if not await asyncio.to_thread(video_processor.repair_video, raw_video_path, repaired_path):
                      repaired_path = raw_video_path
+                     final_video_path = raw_video_path
                 duration, width, height = await asyncio.to_thread(video_processor.get_video_metadata, repaired_path)
                 generated_thumb_path = os.path.join(temp_dir, "generated_thumb.jpg")
                 thumb_success = await asyncio.to_thread(video_processor.generate_thumbnail_from_video, repaired_path, generated_thumb_path)

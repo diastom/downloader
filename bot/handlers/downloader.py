@@ -100,21 +100,55 @@ async def auto_start_download(message: types.Message, state: FSMContext, session
     await _process_download_link(message, state, session, bot)
 
 
+
+async def handle_yt_dlp_link(message: types.Message, state: FSMContext, url: str, domain: str):
+
+
     status_msg = await message.answer("🔎 Extracting video information...")
     info = await asyncio.to_thread(helpers.get_full_video_info, url)
     if not info:
         await status_msg.edit_text("❌ Error: Could not extract video information.")
         return
+    def _format_sort_key(fmt: dict) -> tuple[int, float, int]:
+        height_val = fmt.get('height')
+        try:
+            height_num = int(height_val) if height_val is not None else 0
+        except (TypeError, ValueError):
+            height_num = 0
+
+        tbr_val = fmt.get('tbr')
+        try:
+            tbr_num = float(tbr_val) if tbr_val is not None else 0.0
+        except (TypeError, ValueError):
+            tbr_num = 0.0
+
+        size_val = fmt.get('filesize') or fmt.get('filesize_approx') or 0
+        try:
+            size_num = int(size_val)
+        except (TypeError, ValueError):
+            size_num = 0
+
+        return height_num, tbr_num, size_num
+
     formats = [f for f in info.get('formats', []) if f.get('vcodec') != 'none' and f.get('height')]
     if not formats:
         await status_msg.edit_text("No downloadable video qualities found.")
         return
+
+    best_format = max(formats, key=_format_sort_key)
+    height = best_format.get('height')
+    size_raw = best_format.get('filesize') or best_format.get('filesize_approx') or 0
+    try:
+        approx_size = int(size_raw) / (1024 * 1024)
+    except (TypeError, ValueError):
+        approx_size = 0
     best_format = max(
         formats,
         key=lambda f: ((f.get('height') or 0), (f.get('tbr') or 0), (f.get('filesize') or f.get('filesize_approx') or 0))
     )
     height = best_format.get('height')
     approx_size = (best_format.get('filesize') or best_format.get('filesize_approx') or 0) / (1024 * 1024)
+
     format_id = best_format.get('format_id')
     if not format_id:
         await status_msg.edit_text("❌ Error: Could not determine the best quality format.")
@@ -131,7 +165,6 @@ async def auto_start_download(message: types.Message, state: FSMContext, session
         chat_id=message.chat.id,
         url=url,
         selected_format=format_id,
-        video_info_json=json.dumps(info)
     )
     await state.clear()
 
