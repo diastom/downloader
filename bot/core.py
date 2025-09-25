@@ -1,6 +1,5 @@
 from aiogram import Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
-from utils.bot_instance import bot 
 from config import settings
 from utils.db_session import AsyncSessionLocal
 from bot.handlers import admin, common, downloader, settings as user_settings, video
