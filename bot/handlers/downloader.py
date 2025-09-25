@@ -82,7 +82,7 @@ async def _process_download_link(message: types.Message, state: FSMContext, sess
     elif domain == helpers.EROME_DOMAIN:
         await handle_erome_link(message, state, url)
     elif domain in VIDEO_DOMAINS:
-        await handle_yt_dlp_link(message, state, url)
+        await handle_yt_dlp_link(message, state, url, domain)
     else:
         await message.answer("Could not determine the correct downloader for this site.")
 
@@ -100,7 +100,6 @@ async def auto_start_download(message: types.Message, state: FSMContext, session
     await _process_download_link(message, state, session, bot)
 
 
-async def handle_yt_dlp_link(message: types.Message, state: FSMContext, url: str):
     status_msg = await message.answer("🔎 Extracting video information...")
     info = await asyncio.to_thread(helpers.get_full_video_info, url)
     if not info:
@@ -132,8 +131,7 @@ async def handle_yt_dlp_link(message: types.Message, state: FSMContext, url: str
         chat_id=message.chat.id,
         url=url,
         selected_format=format_id,
-        video_info_json=json.dumps(info),
-        user_id=message.from_user.id
+        video_info_json=json.dumps(info)
     )
     await state.clear()
 
@@ -201,7 +199,14 @@ async def handle_manhwa_link(message: types.Message, state: FSMContext, url: str
             await status_msg.edit_text("No chapters found.")
             return
         await state.set_state(DownloadFSM.manhwa_selecting_chapters)
-        await state.update_data(chapters=chapters, title=title, prefix=domain, selected_indices=[], current_page=0)
+        await state.update_data(
+            chapters=chapters,
+            title=title,
+            prefix=domain,
+            selected_indices=[],
+            current_page=0,
+            user_id=message.from_user.id,
+        )
         keyboard = helpers.create_chapter_keyboard(chapters, [], 0, domain)
         await status_msg.edit_text(f"✅ Found {len(chapters)} chapters for '{title}'. Select chapters:", reply_markup=keyboard)
     except Exception as e:
@@ -283,5 +288,12 @@ async def handle_manhwa_zip_choice(query: types.CallbackQuery, state: FSMContext
     data = await state.get_data()
     chapters_to_download = [data['chapters'][i] for i in sorted(data['selected_indices'])]
     await query.message.edit_text(f"✅ Request for {len(chapters_to_download)} chapters of '{data['title']}' sent to queue.")
-    download_tasks.process_manhwa_task.delay(chat_id=query.message.chat.id, manhwa_title=data['title'], chapters_to_download=chapters_to_download, create_zip=create_zip, site_key=data['prefix'])
+    download_tasks.process_manhwa_task.delay(
+        chat_id=query.message.chat.id,
+        manhwa_title=data['title'],
+        chapters_to_download=chapters_to_download,
+        create_zip=create_zip,
+        site_key=data['prefix'],
+        user_id=data['user_id'],
+    )
     await state.clear()

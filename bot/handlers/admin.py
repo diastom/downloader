@@ -101,11 +101,41 @@ async def admin_panel_entry(message: types.Message, state: FSMContext):
 
 @router.message(AdminFSM.panel, F.text == "📊 آمار")
 async def show_stats(message: types.Message, session: AsyncSession):
-    all_users = await database.get_all_users(session)
-    active_subs = sum(1 for u in all_users if u.sub_is_active)
-    total_downloads = sum(sum(u.stats_site_usage.values()) for u in all_users if u.stats_site_usage)
-    stats_text = f"📊 **Bot Stats**\n\n👥 Users: {len(all_users)}\n💳 Active Subs: {active_subs}\n📥 Total Downloads: {total_downloads}"
-    await message.answer(stats_text, parse_mode="Markdown")
+    stats = await database.get_bot_stats(session)
+
+    def fmt_count(value: int) -> str:
+        return f"{value:02d}"
+
+    def fmt_size(bytes_value: int) -> str:
+        gb_value = bytes_value / (1024 ** 3)
+        return f"{gb_value:.2f}GB"
+
+    popular_sites = stats["popular_sites"] or []
+    if popular_sites:
+        popular_lines = "\n".join(f"• {site}" for site in popular_sites)
+    else:
+        popular_lines = "• No data yet"
+
+    stats_text = (
+        "📊 Bot Stats\n\n"
+        "👥 Users\n"
+        f"• Total Users: {fmt_count(stats['total_users'])}\n"
+        f"• Users (Today): {fmt_count(stats['users_today'])}\n\n"
+        "💳 Subscriptions\n"
+        f"• Active Subscriptions: {fmt_count(stats['active_subscriptions'])}\n"
+        f"• Expired Subscriptions: {fmt_count(stats['expired_subscriptions'])}\n\n"
+        "🌐 Most Popular Sites\n"
+        f"{popular_lines}\n\n"
+        "📥 Downloads\n"
+        f"• Total Downloads: {fmt_count(stats['total_downloads'])}\n"
+        f"• Downloads (Today): {fmt_count(stats['downloads_today'])}\n\n"
+        "🏷 Sizes\n"
+        f"• Total Downloads Size: {fmt_size(stats['total_size_bytes'])}\n"
+        f"• Downloads Size (Today): {fmt_size(stats['size_today_bytes'])}\n\n"
+        "@OviaRobot"
+    )
+
+    await message.answer(stats_text)
 
 @router.message(AdminFSM.panel, F.text == "⚙️ مدیریت اشتراک")
 async def ask_for_user_id(message: types.Message, state: FSMContext):
