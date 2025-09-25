@@ -1,5 +1,6 @@
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import declarative_base
+from sqlalchemy.pool import NullPool
 
 from config import settings
 
@@ -7,7 +8,8 @@ from config import settings
 engine = create_async_engine(
     settings.database_url,
     future=True,
-    echo=False, # Set to True to see SQL queries in the logs
+    echo=False,  # Set to True to see SQL queries in the logs
+    poolclass=NullPool,  # Prevent reusing connections across event loops
 )
 
 # Create a session factory for creating new async sessions
