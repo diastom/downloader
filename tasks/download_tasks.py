@@ -15,7 +15,7 @@ from config import settings
 from utils import database, helpers, telegram_api, video_processor
 from utils.db_session import AsyncSessionLocal
 from tasks.celery_app import celery_app
-from bot.handlers.common import get_task_done_keyboard
+from bot.handlers.common import get_task_done_keyboard, get_main_menu_keyboard
 from utils.models import PublicArchive
 
 logger = logging.getLogger(__name__)
@@ -193,10 +193,13 @@ def process_manhwa_task(chat_id: int, manhwa_title: str, chapters_to_download: l
                     if create_zip:
                         zip_path = Path(base_temp_dir) / f"{helpers.sanitize_filename(chapter['name'])}.zip"
                         await asyncio.to_thread(helpers.create_zip_from_folder, str(chapter_temp_folder), str(zip_path))
-                        # Attach keyboard to the final ZIP file
                         await bot.send_document(chat_id=chat_id, document=FSInputFile(zip_path), caption=zip_path.name)
+                    else:
+                        for image_file in sorted(chapter_temp_folder.glob('*.jpg')):
+                            await bot.send_photo(chat_id=chat_id, photo=FSInputFile(image_file))
+
                 await bot.delete_message(chat_id=chat_id, message_id=status_message.message_id)
-                await bot.send_message(chat_id=chat_id, text="تسک شما کامل شد✅", reply_markup=get_main_menu_keyboard())
+                await bot.send_message(chat_id=chat_id, text="تسک شما انجام شد✅", reply_markup=get_task_done_keyboard())
             except Exception as e:
                 logger.error(f"Celery Manhwa Task Error for {site_key}: {e}", exc_info=True)
                 await bot.edit_message_text(text=f"❌ An error occurred during download: {e}", chat_id=chat_id, message_id=status_message.message_id)
