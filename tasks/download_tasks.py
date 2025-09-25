@@ -150,7 +150,7 @@ def process_gallery_dl_task(chat_id: int, url: str, create_zip: bool, user_id: i
                         else:
                             await bot.send_document(chat_id=chat_id, document=FSInputFile(file_path), caption=filename)
                     await bot.delete_message(chat_id=chat_id, message_id=status_message.message_id)
-                    await bot.send_message(chat_id=chat_id, text="تسک شما کامل شد✅", reply_markup=get_main_menu_keyboard())
+                    await bot.send_message(chat_id=chat_id, text="تسک شما کامل شد✅", reply_markup=get_task_done_keyboard())
             except Exception as e:
                 logger.error(f"Celery Gallery-DL Task Error: {e}", exc_info=True)
                 await bot.edit_message_text(text=f"❌ An error occurred: {e}", chat_id=chat_id, message_id=status_message.message_id)
