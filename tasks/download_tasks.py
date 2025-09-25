@@ -33,6 +33,10 @@ def download_video_task(chat_id: int, url: str, selected_format: str, video_info
         bot_instance = get_bot_instance()
         status_message = await bot_instance.send_message(chat_id=chat_id, text="📥 Your video download is starting...") if send_completion_message else None
 
+        video_path_to_clean = None
+        if url.startswith("file://"):
+            video_path_to_clean = url.replace("file://", "")
+
         try:
             if not video_info and not url.startswith("file://"):
                 info = await asyncio.to_thread(helpers.get_full_video_info, url)
@@ -89,6 +93,13 @@ def download_video_task(chat_id: int, url: str, selected_format: str, video_info
                 await bot_instance.edit_message_text(text=f"❌ An error occurred during video processing: {e}", chat_id=chat_id, message_id=status_message.message_id)
                 if send_completion_message:
                      await bot_instance.send_message(chat_id=chat_id, text="Please try again or contact an admin.", reply_markup=get_main_menu_keyboard())
+        finally:
+            if video_path_to_clean and os.path.exists(video_path_to_clean):
+                try:
+                    os.remove(video_path_to_clean)
+                    logger.info(f"Cleaned up temporary video file: {video_path_to_clean}")
+                except OSError as e:
+                    logger.error(f"Error cleaning up file {video_path_to_clean}: {e}", exc_info=True)
 
     helpers.run_async_in_sync(_async_worker())
 
@@ -146,7 +157,20 @@ def process_gallery_dl_task(chat_id: int, url: str, create_zip: bool, user_id: i
                         if ext in ['.jpg', '.jpeg', '.png', '.webp', '.gif']:
                             await bot.send_photo(chat_id=chat_id, photo=FSInputFile(file_path), caption=filename)
                         elif ext in ['.mp4', '.mkv', '.webm', '.mov']:
-                            download_video_task.delay(chat_id=chat_id, url=f"file://{file_path}", selected_format='best', video_info_json=f'{{"title": "{filename}"}}', user_id=user_id, send_completion_message=False)
+                            try:
+                                with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as temp_vid:
+                                    shutil.move(file_path, temp_vid.name)
+                                    download_video_task.delay(
+                                        chat_id=chat_id,
+                                        url=f"file://{temp_vid.name}",
+                                        selected_format='best',
+                                        video_info_json=f'{{"title": "{filename}"}}',
+                                        user_id=user_id,
+                                        send_completion_message=False
+                                    )
+                            except Exception as e:
+                                logger.error(f"Failed to move and queue video {filename}: {e}", exc_info=True)
+                                await bot.send_message(chat_id=chat_id, text=f"⚠️ Could not process video: {filename}")
                         else:
                             await bot.send_document(chat_id=chat_id, document=FSInputFile(file_path), caption=filename)
                     await bot.delete_message(chat_id=chat_id, message_id=status_message.message_id)
