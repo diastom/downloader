@@ -69,7 +69,7 @@ def download_video_task(chat_id: int, url: str, selected_format: str, video_info
 
                 if not url.startswith("file://"):
                     async with AsyncSessionLocal() as session:
-                        await database.add_public_archive_item(session=session, url=url, message_id=public_message_id, channel_id=public_channel_id)
+                        await database.add_public_archive_item(session, url=url, message_id=public_message_id, channel_id=public_channel_id)
 
                 if status_message: await bot.edit_message_text(text="📨 Sending to you...", chat_id=chat_id, message_id=status_message.message_id)
 
