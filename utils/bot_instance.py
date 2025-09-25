@@ -5,7 +5,9 @@ from aiogram.client.default import DefaultBotProperties
 from config import settings 
 
 # آدرس سرور محلی را مشخص کنید
-LOCAL_API_SERVER = TelegramAPIServer.from_base('http://91.107.146.233:8081')
+LOCAL_API_SERVER = TelegramAPIServer.from_base(
+    'http://91.107.146.233:8081', is_local=True
+)
 
 # یک session با timeout بسیار بالا (مثلاً ۳۰ دقیقه) بسازید
 session = AiohttpSession(
