@@ -2,10 +2,11 @@ import asyncio
 import logging
 import sys
 
-from bot.core import bot, setup_dispatcher
+from bot.core import setup_dispatcher
+from utils.bot_instance import create_bot_instance
 from utils.helpers import check_dependencies
-from utils.db_session import engine 
-from utils.models import Base 
+from utils.db_session import engine
+from utils.models import Base
 
 async def init_database():
     """
@@ -30,17 +31,19 @@ async def main():
     if not check_dependencies():
         logger.error("A required system dependency is missing. Please install it and try again.")
         sys.exit(1)
-        
+
     logger.info("Initializing database...")
     await init_database()
-    
-    # The Telethon authorization check is no longer needed at startup.
-    # It will be handled by the get_or_create_personal_archive function when needed.
 
+    bot = create_bot_instance()
     dp = setup_dispatcher()
 
     logger.info("Starting bot polling...")
-    await dp.start_polling(bot)
+    try:
+        await dp.start_polling(bot)
+    finally:
+        await bot.session.close()
+        logger.info("Bot session closed.")
 
 
 if __name__ == "__main__":
