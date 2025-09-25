@@ -11,6 +11,7 @@ class Settings(BaseSettings):
 
     public_archive_channel_id: int
     private_archive_channel_id: int
+    personal_archive_channel_id: int # For customized videos
 
     # --- Optional: For Local Bot API Server ---
     # Set to True if you are running your own Bot API server.
