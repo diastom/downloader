@@ -16,6 +16,7 @@ router = Router()
 class EncodeFSM(StatesGroup):
     choosing_options = State()
     awaiting_new_name = State()
+    choosing_quality = State()
 
 # --- Helper Functions ---
 
@@ -25,10 +26,14 @@ async def get_encode_panel(state: FSMContext) -> tuple[str, InlineKeyboardMarkup
     options = data.get("options", {})
     size_mb = data.get('file_size', 0) / (1024 * 1024)
 
+    selected_quality = options.get('selected_quality', 'original')
+    quality_text = f"{selected_quality}p" if selected_quality != 'original' else "Original"
+
     panel_text = (
         f"🎬 **پنل تنظیمات انکد**\n\n"
         f"🔹 **نام فایل:** `{data.get('filename')}`\n"
-        f"🔹 **حجم تقریبی:** `{size_mb:.2f} MB`\n\n"
+        f"🔹 **حجم تقریبی:** `{size_mb:.2f} MB`\n"
+        f"🔹 **کیفیت خروجی:** `{quality_text}`\n\n"
         "با کلیک روی دکمه‌ها، گزینه‌های مورد نظر را فعال/غیرفعال کنید و سپس 'شروع عملیات' را بزنید."
     )
 
@@ -42,10 +47,53 @@ async def get_encode_panel(state: FSMContext) -> tuple[str, InlineKeyboardMarkup
             InlineKeyboardButton(text=f"اعمال تامبنیل {thumb_check}", callback_data="enc_toggle_thumb")
         ],
         [InlineKeyboardButton(text=f"اعمال واترمارک {water_check}", callback_data="enc_toggle_water")],
+        [InlineKeyboardButton(text="🌇 انتخاب کیفیت", callback_data="enc_select_quality")],
         [InlineKeyboardButton(text="🚀 شروع عملیات", callback_data="enc_start")],
         [InlineKeyboardButton(text="انصراف ❌", callback_data="enc_cancel")]
     ])
     return panel_text, keyboard
+
+
+@router.callback_query(EncodeFSM.choosing_options, F.data == "enc_select_quality")
+async def handle_select_quality_button(query: types.CallbackQuery, state: FSMContext):
+    """Shows the quality selection menu."""
+    await state.set_state(EncodeFSM.choosing_quality)
+    qualities = ["original", "1080", "720", "480", "360", "240"]
+
+    keyboard_buttons = []
+    for quality in qualities:
+        text = f"{quality}p" if quality != "original" else "Original Quality"
+        keyboard_buttons.append([InlineKeyboardButton(text=text, callback_data=f"enc_quality_{quality}")])
+
+    keyboard_buttons.append([InlineKeyboardButton(text="🔙 بازگشت", callback_data="enc_quality_back")])
+
+    await query.message.edit_text(
+        "لطفاً کیفیت مورد نظر برای خروجی را انتخاب کنید:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+    )
+    await query.answer()
+
+@router.callback_query(EncodeFSM.choosing_quality, F.data.startswith("enc_quality_"))
+async def handle_set_quality(query: types.CallbackQuery, state: FSMContext):
+    """Saves the selected quality and returns to the main encode panel."""
+    action = query.data.replace("enc_quality_", "")
+
+    if action == "back":
+        await state.set_state(EncodeFSM.choosing_options)
+        panel_text, keyboard = await get_encode_panel(state)
+        await query.message.edit_text(panel_text, reply_markup=keyboard)
+        await query.answer()
+        return
+
+    data = await state.get_data()
+    options = data.get("options", {})
+    options['selected_quality'] = action
+    await state.update_data(options=options)
+
+    await state.set_state(EncodeFSM.choosing_options)
+    panel_text, keyboard = await get_encode_panel(state)
+    await query.message.edit_text(panel_text, reply_markup=keyboard)
+    await query.answer(f"کیفیت خروجی روی {action}p تنظیم شد.")
 
 # --- Handlers ---
 
