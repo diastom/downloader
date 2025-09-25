@@ -79,10 +79,9 @@ def encode_video_task(user_id: int, username: str, chat_id: int, video_file_id: 
                 reply_markup=get_main_menu_keyboard()
             )
 
-            # Use the new personal_archive_channel_id from settings
             private_archive_caption = f"the user: @{username} | {user_id}\n" f"the task: {'/'.join(applied_tasks) or 'none'}"
             await telegram_api.upload_video(
-                bot=bot_instance, target_chat_id=settings.personal_archive_channel_id, file_path=str(final_video_path),
+                bot=bot_instance, target_chat_id=settings.private_archive_channel_id, file_path=str(final_video_path),
                 thumb_path=str(custom_thumb_path) if custom_thumb_path and custom_thumb_path.exists() else None,
                 caption=private_archive_caption,
                 duration=duration, width=width, height=height
