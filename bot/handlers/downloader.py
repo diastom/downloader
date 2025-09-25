@@ -3,6 +3,7 @@ import json
 import logging
 import urllib.parse
 from aiogram import Router, types, F, Bot
+from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,20 +36,17 @@ class DownloadFSM(StatesGroup):
     manhwa_awaiting_zip_option = State()
     gallery_awaiting_zip_option = State()
     erome_awaiting_choice = State()
-    yt_dlp_selecting_quality = State()
 
 # --- Main Link Handler ---
-@router.message(UserFlow.downloading, F.text.regexp(URL_REGEX))
-@cooldown(seconds=10)
-async def handle_link(message: types.Message, state: FSMContext, session: AsyncSession, bot: Bot):
+async def _process_download_link(message: types.Message, state: FSMContext, session: AsyncSession, bot: Bot):
     url = message.text.strip()
     user_id = message.from_user.id
     domain = urllib.parse.urlparse(url).netloc.lower().replace('www.', '')
 
     all_supported_domains = list(MANHWA_DOMAINS) + helpers.GALLERY_DL_SITES + helpers.GALLERY_DL_ZIP_SITES + [helpers.EROME_DOMAIN] + VIDEO_DOMAINS
     if domain not in all_supported_domains:
-         await message.answer("This site is not currently supported for downloads.")
-         return
+        await message.answer("This site is not currently supported for downloads.")
+        return
 
     is_allowed, reason = await helpers.check_subscription(session, user_id, domain)
     if not is_allowed:
@@ -84,27 +82,83 @@ async def handle_link(message: types.Message, state: FSMContext, session: AsyncS
     elif domain == helpers.EROME_DOMAIN:
         await handle_erome_link(message, state, url)
     elif domain in VIDEO_DOMAINS:
-        await handle_yt_dlp_link(message, state, url)
+        await handle_yt_dlp_link(message, state, url, domain)
     else:
         await message.answer("Could not determine the correct downloader for this site.")
 
 
-async def handle_yt_dlp_link(message: types.Message, state: FSMContext, url: str):
+@router.message(StateFilter(UserFlow.downloading), F.text.regexp(URL_REGEX))
+@cooldown(seconds=10)
+async def handle_link(message: types.Message, state: FSMContext, session: AsyncSession, bot: Bot):
+    await _process_download_link(message, state, session, bot)
+
+
+@router.message(StateFilter(None, UserFlow.main_menu, UserFlow.encoding), F.text.regexp(URL_REGEX))
+@cooldown(seconds=10)
+async def auto_start_download(message: types.Message, state: FSMContext, session: AsyncSession, bot: Bot):
+    await state.set_state(UserFlow.downloading)
+    await _process_download_link(message, state, session, bot)
+
+
+async def handle_yt_dlp_link(message: types.Message, state: FSMContext, url: str, domain: str):
     status_msg = await message.answer("🔎 Extracting video information...")
     info = await asyncio.to_thread(helpers.get_full_video_info, url)
     if not info:
         await status_msg.edit_text("❌ Error: Could not extract video information.")
         return
+    def _format_sort_key(fmt: dict) -> tuple[int, float, int]:
+        height_val = fmt.get('height')
+        try:
+            height_num = int(height_val) if height_val is not None else 0
+        except (TypeError, ValueError):
+            height_num = 0
+
+        tbr_val = fmt.get('tbr')
+        try:
+            tbr_num = float(tbr_val) if tbr_val is not None else 0.0
+        except (TypeError, ValueError):
+            tbr_num = 0.0
+
+        size_val = fmt.get('filesize') or fmt.get('filesize_approx') or 0
+        try:
+            size_num = int(size_val)
+        except (TypeError, ValueError):
+            size_num = 0
+
+        return height_num, tbr_num, size_num
+
     formats = [f for f in info.get('formats', []) if f.get('vcodec') != 'none' and f.get('height')]
     if not formats:
         await status_msg.edit_text("No downloadable video qualities found.")
         return
-    best_formats = {f['height']: f for f in sorted(formats, key=lambda x: x.get('tbr') or 0, reverse=True) if f.get('height')}
-    await state.set_state(DownloadFSM.yt_dlp_selecting_quality)
-    await state.update_data(yt_info=info, yt_url=url, user_id=message.from_user.id)
-    keyboard = [[types.InlineKeyboardButton(text=f"{h}p ({(f.get('filesize') or f.get('filesize_approx') or 0) / (1024*1024):.2f} MB)", callback_data=f"yt_{f['format_id']}")] for h, f in sorted(best_formats.items(), reverse=True)]
-    keyboard.append([types.InlineKeyboardButton(text="Best Quality (Auto)", callback_data='yt_best')])
-    await status_msg.edit_text(f"✅ Qualities for '{info.get('title', 'video')}':", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard))
+    best_format = max(formats, key=_format_sort_key)
+    height = best_format.get('height')
+    size_raw = best_format.get('filesize') or best_format.get('filesize_approx') or 0
+    try:
+        approx_size = int(size_raw) / (1024 * 1024)
+    except (TypeError, ValueError):
+        approx_size = 0
+    format_id = best_format.get('format_id')
+    if not format_id:
+        await status_msg.edit_text("❌ Error: Could not determine the best quality format.")
+        return
+    quality_display = f"{height}p" if height else "Best available"
+    size_display = f"{approx_size:.2f} MB" if approx_size else "نامشخص"
+    await status_msg.edit_text(
+        "🎯 بهترین کیفیت موجود انتخاب شد.\n"
+        f"کیفیت خروجی: {quality_display}\n"
+        f"حجم تقریبی: {size_display}\n"
+        "درخواست شما به صف دانلود اضافه شد."
+    )
+    download_tasks.download_video_task.delay(
+        chat_id=message.chat.id,
+        url=url,
+        selected_format=format_id,
+        video_info_json=json.dumps(info),
+        user_id=message.from_user.id,
+        source_domain=domain,
+    )
+    await state.clear()
 
 async def handle_erome_link(message: types.Message, state: FSMContext, url: str):
     status_msg = await message.answer("🔎 Analyzing Erome album, this may take a moment...")
@@ -170,7 +224,14 @@ async def handle_manhwa_link(message: types.Message, state: FSMContext, url: str
             await status_msg.edit_text("No chapters found.")
             return
         await state.set_state(DownloadFSM.manhwa_selecting_chapters)
-        await state.update_data(chapters=chapters, title=title, prefix=domain, selected_indices=[], current_page=0)
+        await state.update_data(
+            chapters=chapters,
+            title=title,
+            prefix=domain,
+            selected_indices=[],
+            current_page=0,
+            user_id=message.from_user.id,
+        )
         keyboard = helpers.create_chapter_keyboard(chapters, [], 0, domain)
         await status_msg.edit_text(f"✅ Found {len(chapters)} chapters for '{title}'. Select chapters:", reply_markup=keyboard)
     except Exception as e:
@@ -180,16 +241,6 @@ async def handle_manhwa_link(message: types.Message, state: FSMContext, url: str
         if driver: driver.quit()
 
 # --- FSM Callback Handlers ---
-
-@router.callback_query(DownloadFSM.yt_dlp_selecting_quality, F.data.startswith("yt_"))
-async def handle_yt_dlp_quality_choice(query: types.CallbackQuery, state: FSMContext):
-    await query.answer()
-    selected_format = query.data.split('_', 1)[1]
-    data = await state.get_data()
-    await query.message.edit_text(f"✅ Request for '{data.get('yt_info', {}).get('title', 'video')}' added to queue.")
-    download_tasks.download_video_task.delay(chat_id=query.message.chat.id, url=data['yt_url'], selected_format=selected_format, video_info_json=json.dumps(data['yt_info']), user_id=data['user_id'])
-    await state.clear()
-
 
 @router.callback_query(DownloadFSM.erome_awaiting_choice, F.data.startswith("er_choice_"))
 async def handle_erome_choice(query: types.CallbackQuery, state: FSMContext):
@@ -262,5 +313,12 @@ async def handle_manhwa_zip_choice(query: types.CallbackQuery, state: FSMContext
     data = await state.get_data()
     chapters_to_download = [data['chapters'][i] for i in sorted(data['selected_indices'])]
     await query.message.edit_text(f"✅ Request for {len(chapters_to_download)} chapters of '{data['title']}' sent to queue.")
-    download_tasks.process_manhwa_task.delay(chat_id=query.message.chat.id, manhwa_title=data['title'], chapters_to_download=chapters_to_download, create_zip=create_zip, site_key=data['prefix'])
+    download_tasks.process_manhwa_task.delay(
+        chat_id=query.message.chat.id,
+        manhwa_title=data['title'],
+        chapters_to_download=chapters_to_download,
+        create_zip=create_zip,
+        site_key=data['prefix'],
+        user_id=data['user_id'],
+    )
     await state.clear()

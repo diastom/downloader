@@ -12,6 +12,7 @@ from urllib.parse import urljoin, urlparse
 import json
 import requests
 import yt_dlp
+import aiohttp
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, File
 from bs4 import BeautifulSoup
 from selenium import webdriver
@@ -187,19 +188,53 @@ async def download_or_copy_file(bot: "Bot", file: "File", destination: Path):
     Downloads a file using the standard method or copies it directly if a local
     Bot API server data directory is configured.
     """
-    if settings.local_bot_api_enabled and settings.local_bot_api_server_data_dir:
-        source_path = Path(file.file_path)
-        if not source_path.is_absolute():
-            source_path = Path(settings.local_bot_api_server_data_dir) / source_path
+    destination.parent.mkdir(parents=True, exist_ok=True)
 
-        logger.info(f"Local Bot API enabled. Attempting to copy from {source_path}")
-        if source_path.exists():
-            shutil.copy(source_path, destination)
-            return
+    if settings.local_bot_api_enabled:
+        file_path = Path(file.file_path)
+        base_dir = Path(settings.local_bot_api_server_data_dir) if settings.local_bot_api_server_data_dir else None
 
-        logger.warning(f"Source file not found at {source_path}. Falling back to standard download.")
+        def _token_dir_name() -> str:
+            return f"bot{settings.bot_token.replace(':', '_')}"
 
-    logger.info(f"Default Telegram API. Downloading file to {destination}")
+        candidate_paths: List[Path] = []
+        if file_path.is_absolute():
+            candidate_paths.append(file_path)
+        if base_dir:
+            candidate_paths.extend([
+                base_dir / file_path,
+                base_dir / _token_dir_name() / file_path,
+                base_dir / "bots" / _token_dir_name() / file_path,
+                base_dir / "files" / file_path,
+                base_dir / "files" / _token_dir_name() / file_path,
+            ])
+
+        for source_path in candidate_paths:
+            logger.debug(f"Trying local Bot API copy from {source_path}")
+            if source_path.exists():
+                shutil.copy(source_path, destination)
+                logger.info(f"Local Bot API copy succeeded from {source_path}")
+                return
+
+        api = getattr(bot.session, "api", None)
+        if api is not None:
+            try:
+                local_url = api.file_url(bot.token, file.file_path)
+                logger.info(f"Local Bot API enabled. Streaming file from {local_url}")
+                async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=600)) as session:
+                    async with session.get(local_url) as response:
+                        response.raise_for_status()
+                        with destination.open("wb") as destination_file:
+                            async for chunk in response.content.iter_chunked(1 << 16):
+                                destination_file.write(chunk)
+                return
+            except Exception as error:
+                logger.warning(
+                    f"Local Bot API streaming failed ({error}). Falling back to bot.download_file.",
+                    exc_info=True,
+                )
+
+    logger.info(f"Falling back to Telegram download API for {destination}")
     await bot.download_file(file.file_path, destination=str(destination))
 
 def download_single_image(args: Tuple[str, str, dict]) -> bool:
