@@ -80,7 +80,10 @@ def apply_watermark_to_video(
         'ffmpeg', '-y',
         '-i', input_path,
         '-vf', video_filter,
-        '-codec:a', 'copy',
+        '-c:v', 'libx264',
+        '-preset', 'veryfast',
+        '-crf', '25',
+        '-c:a', 'copy',
         output_path
     ]
 
