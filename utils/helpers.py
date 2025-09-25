@@ -182,25 +182,29 @@ async def run_gallery_dl_download(url: str, temp_dir: str) -> Tuple[List[str] | 
 
 async def download_or_copy_file(bot: "Bot", file: "File", destination: Path):
     """
-    Downloads a file using the standard method or copies it directly if a local
-    Bot API server data directory is configured.
+    Downloads a file using the standard method or copies it directly if the bot
+    is configured to use a local Bot API server.
     """
-    from config import settings
+    # Check if the bot's session is using a local server
+    if bot.session.api.is_local:
+        # Construct the source path from the local server's data directory
+        # This is a more reliable way than using separate settings
+        data_dir = bot.session.api.data_dir
+        if data_dir:
+            source_path = Path(data_dir) / file.file_path
+            logger.info(f"Local Bot API enabled. Attempting to copy from {source_path}")
+            if source_path.exists():
+                shutil.copy(source_path, destination)
+                return
 
-    if settings.local_bot_api_enabled and settings.local_bot_api_server_data_dir:
-        source_path = Path(file.file_path)
-        if not source_path.is_absolute():
-            source_path = Path(settings.local_bot_api_server_data_dir) / source_path
+            # If copy fails, log a warning but fall through to downloading
+            logger.warning(f"Source file not found at {source_path}. Falling back to standard download.")
+        else:
+            logger.warning("Local Bot API is in use, but data_dir is not configured. Falling back to standard download.")
 
-        logger.info(f"Local Bot API enabled. Attempting to copy from {source_path}")
-        if source_path.exists():
-            shutil.copy(source_path, destination)
-            return
-
-        raise FileNotFoundError(f"Source file not found at {source_path}. Check your local_bot_api_server_data_dir and file path.")
-    else:
-        logger.info(f"Default Telegram API. Downloading file to {destination}")
-        await bot.download_file(file.file_path, destination=str(destination))
+    # Fallback to standard download if not a local server or if copy fails
+    logger.info(f"Default Telegram API. Downloading file to {destination}")
+    await bot.download_file(file.file_path, destination=str(destination))
 
 def download_single_image(args: Tuple[str, str, dict]) -> bool:
     img_url, file_path, headers = args
