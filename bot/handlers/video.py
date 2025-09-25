@@ -7,7 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from bot.handlers.common import UserFlow
-from bot.handlers.settings import get_watermark_panel
 from tasks import video_tasks
 from utils import database
 
@@ -17,8 +16,6 @@ router = Router()
 class EncodeFSM(StatesGroup):
     choosing_options = State()
     awaiting_new_name = State()
-    awaiting_thumbnail = State()
-    configuring_watermark = State()
 
 # --- Helper Functions ---
 
@@ -64,9 +61,7 @@ async def handle_encode_video_entry(message: types.Message, state: FSMContext):
         "options": {"rename": False, "thumb": False, "water": False}
     }
     panel_text, keyboard = await get_encode_panel(state)
-    panel_message = await message.answer(panel_text, reply_markup=keyboard)
-    initial_data["panel_message_id"] = panel_message.message_id
-    await state.update_data(initial_data)
+    await message.answer(panel_text, reply_markup=keyboard)
 
 @router.callback_query(EncodeFSM.choosing_options, F.data.startswith("enc_toggle_"))
 async def handle_toggle_option(query: types.CallbackQuery, state: FSMContext, session: AsyncSession):
@@ -74,7 +69,7 @@ async def handle_toggle_option(query: types.CallbackQuery, state: FSMContext, se
     action = query.data.replace("enc_toggle_", "")
     user_id = query.from_user.id
 
-    # Check for subscription access before toggling the option
+    # Check for subscription access before allowing the toggle
     if action == "thumb":
         if not await database.has_feature_access(session, user_id, 'thumbnail'):
             await query.answer("اشتراک شما شامل قابلیت تامبنیل نمی‌شود.", show_alert=True)
@@ -105,19 +100,13 @@ async def handle_start_button(query: types.CallbackQuery, state: FSMContext, ses
     user_id = query.from_user.id
 
     if options.get("thumb") and not await database.get_user_thumbnail(session, user_id):
-        await state.set_state(EncodeFSM.awaiting_thumbnail)
-        await query.message.edit_text("شما گزینه تامبنیل را انتخاب کرده‌اید اما تامبنیلی تنظیم نکرده‌اید. لطفاً یک عکس برای تامبنیل ارسال کنید.")
-        return await query.answer()
+        await query.answer("خطا: شما اعمال تامبنیل را انتخاب کرده‌اید اما تامبنیلی تنظیم نکرده‌اید. لطفاً با /thumb تنظیم کنید و دوباره امتحان کنید.", show_alert=True)
+        return
 
     watermark_settings = await database.get_user_watermark_settings(session, user_id)
     if options.get("water") and not watermark_settings.enabled:
-        await state.set_state(EncodeFSM.configuring_watermark)
-        text, keyboard = await get_watermark_panel(session, user_id)
-        await query.message.edit_text(
-            "شما گزینه واترمارک را انتخاب کرده‌اید اما واترمارک شما غیرفعال است. لطفاً آن را فعال کرده و سپس 'Close Panel' را بزنید تا به این پنل بازگردید.",
-            reply_markup=keyboard
-        )
-        return await query.answer()
+        await query.answer("خطا: شما اعمال واترمارک را انتخاب کرده‌اید اما واترمارک شما غیرفعال است. لطفاً با /water آن را فعال کنید و دوباره امتحان کنید.", show_alert=True)
+        return
 
     await query.message.edit_text("✅ درخواست شما به صف انکد اضافه شد...")
     video_tasks.encode_video_task.delay(
@@ -129,7 +118,6 @@ async def handle_start_button(query: types.CallbackQuery, state: FSMContext, ses
         new_filename=data.get('filename')
     )
     await state.clear()
-    await query.answer()
 
 @router.message(EncodeFSM.awaiting_new_name, F.text)
 async def receive_new_filename(message: types.Message, state: FSMContext):
@@ -141,34 +129,8 @@ async def receive_new_filename(message: types.Message, state: FSMContext):
 
     await state.set_state(EncodeFSM.choosing_options)
     panel_text, keyboard = await get_encode_panel(state)
-    # Re-show the panel by editing the original prompt message
-    panel_message_id = data.get("panel_message_id")
-    if panel_message_id:
-        try:
-            await message.bot.edit_message_text(chat_id=message.chat.id, message_id=panel_message_id, text=panel_text, reply_markup=keyboard)
-        except Exception: pass # Ignore if message is not modified
-    await message.delete() # Delete the user's text message for cleanliness
-
-@router.message(EncodeFSM.awaiting_thumbnail, F.photo)
-async def receive_thumbnail_and_return(message: types.Message, state: FSMContext, session: AsyncSession):
-    """Receives the thumbnail and returns the user to the main panel."""
-    await database.set_user_thumbnail(session, user_id=message.from_user.id, file_id=message.photo[-1].file_id)
-    await message.answer("✅ تامبنیل تنظیم شد. به پنل انکد بازگشتید.")
-
-    await state.set_state(EncodeFSM.choosing_options)
-    panel_text, keyboard = await get_encode_panel(state)
-    data = await state.get_data()
-    panel_message_id = data.get("panel_message_id")
-    if panel_message_id:
-        await message.bot.edit_message_text(chat_id=message.chat.id, message_id=panel_message_id, text=panel_text, reply_markup=keyboard)
-
-@router.callback_query(EncodeFSM.configuring_watermark, F.data == "wm_close")
-async def return_from_watermark(query: types.CallbackQuery, state: FSMContext):
-    """Returns the user to the encoding panel after they close the watermark panel."""
-    await query.answer("بازگشت به پنل انکد...")
-    await state.set_state(EncodeFSM.choosing_options)
-    panel_text, keyboard = await get_encode_panel(state)
-    await query.message.edit_text(panel_text, reply_markup=keyboard)
+    await message.answer(panel_text, reply_markup=keyboard)
+    await message.delete()
 
 @router.callback_query(EncodeFSM.choosing_options, F.data == "enc_cancel")
 async def handle_cancel_encoding(query: types.CallbackQuery, state: FSMContext):

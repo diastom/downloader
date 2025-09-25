@@ -12,7 +12,7 @@ from urllib.parse import urljoin, urlparse
 import json
 import requests
 import yt_dlp
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, File
 from bs4 import BeautifulSoup
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options as ChromeOptions
@@ -25,6 +25,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from sqlalchemy.ext.asyncio import AsyncSession
+from pathlib import Path
 
 from utils import database
 
@@ -181,7 +182,7 @@ async def run_gallery_dl_download(url: str, temp_dir: str) -> Tuple[List[str] | 
         return None, error_message
     return [os.path.join(root, file) for root, _, files in os.walk(temp_dir) for file in files], None
 
-async def download_or_copy_file(bot, file: "File", destination: Path):
+async def download_or_copy_file(bot: "Bot", file: "File", destination: Path):
     """
     Downloads a file using the standard method or copies it directly if a local
     Bot API server data directory is configured.
@@ -190,7 +191,6 @@ async def download_or_copy_file(bot, file: "File", destination: Path):
 
     if settings.local_bot_api_enabled and settings.local_bot_api_server_data_dir:
         source_path = Path(file.file_path)
-        # If the provided path is not absolute, join it with the base data directory
         if not source_path.is_absolute():
             source_path = Path(settings.local_bot_api_server_data_dir) / source_path
 
@@ -371,7 +371,7 @@ def er_get_album_media_selenium(album_url: str, driver) -> Tuple[str, Dict[str, 
         for img_div in soup.find_all('div', class_='img'):
             if img_div.get('data-src'):
                 media_urls['images'].append(img_div['data-src'])
-        
+
         logger.info(f"[{EROME_DOMAIN}] Found {len(media_urls['images'])} images and {len(media_urls['videos'])} videos.")
         return sanitize_filename(album_title), media_urls
     except Exception as e:
@@ -414,4 +414,3 @@ def create_chapter_keyboard(chapters: list, selected_indices: list, page: int, p
     keyboard_rows.append([InlineKeyboardButton(text="✅ شروع دانلود", callback_data=f"{prefix}_start_download")])
 
     return InlineKeyboardMarkup(inline_keyboard=keyboard_rows)
-

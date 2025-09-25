@@ -32,7 +32,6 @@ class User(Base):
     allow_watermark = Column(Boolean, default=True, nullable=False)
 
     stats_site_usage = Column(JSONB)
-    # personal_archive_id is removed
 
     # Relationships
     thumbnail = relationship("Thumbnail", back_populates="user", uselist=False)
