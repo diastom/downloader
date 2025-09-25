@@ -23,7 +23,7 @@ async def get_or_create_user(session: AsyncSession, user_id: int, username: str 
         .where(models.User.id == user_id)
         .options(
             selectinload(models.User.watermark),
-            selectinload(models.User.thumbnail)
+            selectinload(models.User.thumbnails)
         )
     )
     result = await session.execute(stmt)
@@ -80,17 +80,63 @@ async def has_feature_access(session: AsyncSession, user_id: int, feature: str) 
     return False
 
 # --- Thumbnail ---
-async def set_user_thumbnail(session: AsyncSession, user_id: int, file_id: str):
+async def get_user_thumbnails(session: AsyncSession, user_id: int) -> list[models.Thumbnail]:
+    stmt = (
+        select(models.Thumbnail)
+        .where(models.Thumbnail.user_id == user_id)
+        .order_by(models.Thumbnail.id)
+    )
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def set_user_thumbnail(session: AsyncSession, user_id: int, file_id: str) -> models.Thumbnail:
+    """Adds a new thumbnail for the user. Keeps compatibility with previous name."""
     user = await get_or_create_user(session, user_id)
-    if user.thumbnail:
-        user.thumbnail.file_id = file_id
-    else:
-        new_thumbnail = models.Thumbnail(user_id=user_id, file_id=file_id)
-        session.add(new_thumbnail)
+    existing = list(user.thumbnails)
+    if len(existing) >= 10:
+        raise ValueError("Maximum number of thumbnails reached")
+
+    new_thumbnail = models.Thumbnail(user_id=user_id, file_id=file_id)
+    session.add(new_thumbnail)
     await session.commit()
+    await session.refresh(new_thumbnail)
+    return new_thumbnail
+
+
+async def delete_user_thumbnail(session: AsyncSession, user_id: int, thumbnail_id: int) -> bool:
+    stmt = (
+        select(models.Thumbnail)
+        .where(
+            models.Thumbnail.user_id == user_id,
+            models.Thumbnail.id == thumbnail_id,
+        )
+    )
+    result = await session.execute(stmt)
+    thumbnail = result.scalar_one_or_none()
+    if not thumbnail:
+        return False
+
+    await session.delete(thumbnail)
+    await session.commit()
+    return True
+
 
 async def get_user_thumbnail(session: AsyncSession, user_id: int) -> str | None:
-    stmt = select(models.Thumbnail.file_id).where(models.Thumbnail.user_id == user_id)
+    thumbnails = await get_user_thumbnails(session, user_id)
+    if not thumbnails:
+        return None
+    return thumbnails[0].file_id
+
+
+async def get_user_thumbnail_by_id(session: AsyncSession, user_id: int, thumbnail_id: int) -> models.Thumbnail | None:
+    stmt = (
+        select(models.Thumbnail)
+        .where(
+            models.Thumbnail.user_id == user_id,
+            models.Thumbnail.id == thumbnail_id,
+        )
+    )
     result = await session.execute(stmt)
     return result.scalar_one_or_none()
 
