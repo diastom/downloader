@@ -3,6 +3,7 @@ import json
 import logging
 import urllib.parse
 from aiogram import Router, types, F, Bot
+from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -38,17 +39,15 @@ class DownloadFSM(StatesGroup):
     yt_dlp_selecting_quality = State()
 
 # --- Main Link Handler ---
-@router.message(UserFlow.downloading, F.text.regexp(URL_REGEX))
-@cooldown(seconds=10)
-async def handle_link(message: types.Message, state: FSMContext, session: AsyncSession, bot: Bot):
+async def _process_download_link(message: types.Message, state: FSMContext, session: AsyncSession, bot: Bot):
     url = message.text.strip()
     user_id = message.from_user.id
     domain = urllib.parse.urlparse(url).netloc.lower().replace('www.', '')
 
     all_supported_domains = list(MANHWA_DOMAINS) + helpers.GALLERY_DL_SITES + helpers.GALLERY_DL_ZIP_SITES + [helpers.EROME_DOMAIN] + VIDEO_DOMAINS
     if domain not in all_supported_domains:
-         await message.answer("This site is not currently supported for downloads.")
-         return
+        await message.answer("This site is not currently supported for downloads.")
+        return
 
     is_allowed, reason = await helpers.check_subscription(session, user_id, domain)
     if not is_allowed:
@@ -87,6 +86,19 @@ async def handle_link(message: types.Message, state: FSMContext, session: AsyncS
         await handle_yt_dlp_link(message, state, url)
     else:
         await message.answer("Could not determine the correct downloader for this site.")
+
+
+@router.message(StateFilter(UserFlow.downloading), F.text.regexp(URL_REGEX))
+@cooldown(seconds=10)
+async def handle_link(message: types.Message, state: FSMContext, session: AsyncSession, bot: Bot):
+    await _process_download_link(message, state, session, bot)
+
+
+@router.message(StateFilter(None, UserFlow.main_menu, UserFlow.encoding), F.text.regexp(URL_REGEX))
+@cooldown(seconds=10)
+async def auto_start_download(message: types.Message, state: FSMContext, session: AsyncSession, bot: Bot):
+    await state.set_state(UserFlow.downloading)
+    await _process_download_link(message, state, session, bot)
 
 
 async def handle_yt_dlp_link(message: types.Message, state: FSMContext, url: str):

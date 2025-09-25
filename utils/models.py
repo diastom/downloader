@@ -34,7 +34,12 @@ class User(Base):
     stats_site_usage = Column(JSONB)
 
     # Relationships
-    thumbnail = relationship("Thumbnail", back_populates="user", uselist=False)
+    thumbnails = relationship(
+        "Thumbnail",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        order_by="Thumbnail.id",
+    )
     watermark = relationship("WatermarkSetting", back_populates="user", uselist=False)
 
 
@@ -45,7 +50,7 @@ class Thumbnail(Base):
     id = Column(Integer, primary_key=True)
     user_id = Column(BigInteger, ForeignKey('public.users.id'), nullable=False)
     file_id = Column(String, nullable=False)
-    user = relationship("User", back_populates="thumbnail")
+    user = relationship("User", back_populates="thumbnails")
 
 
 class WatermarkSetting(Base):
