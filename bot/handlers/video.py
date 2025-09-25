@@ -61,7 +61,9 @@ async def get_encode_panel(state: FSMContext) -> tuple[str, InlineKeyboardMarkup
         [InlineKeyboardButton(text="🚀 شروع عملیات", callback_data="enc_start")],
         [InlineKeyboardButton(text="انصراف ❌", callback_data="enc_cancel")]
     ])
-    return panel_text, keyboard
+
+    text = "\n".join(panel_lines)
+    return text, keyboard
 
 # --- Handlers ---
 
