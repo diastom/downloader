@@ -55,15 +55,17 @@ COMICK_DOMAIN = "comick.io"
 PORNHUB_DOMAIN = "pornhub.com"
 EROME_DOMAIN = "erome.com"
 EPORNER_DOMAIN = "eporner.com"
-GALLERY_DL_SITES = ["rule34.xyz", "coomer.st", "aryion.com", "kemono.cr", "tapas.io", "tsumino.com", "danbooru.donmai.us", "e621.net"]
+# rule34.xyz is better handled by yt-dlp for videos
+GALLERY_DL_SITES = ["coomer.st", "aryion.com", "kemono.cr", "tapas.io", "tsumino.com", "danbooru.donmai.us", "e621.net"]
 GALLERY_DL_ZIP_SITES = ["mangadex.org", "e-hentai.org"]
+VIDEO_DOMAINS.append("rule34.xyz") # Add rule34 to video domains
 
 ALL_SUPPORTED_SITES = {
     "Manhwa/Webtoon": [TOONILY_COM_DOMAIN, TOONILY_ME_DOMAIN, MANHWACLAN_DOMAIN, MANGA_DISTRICT_DOMAIN, COMICK_DOMAIN],
     "Gallery/Hentai": GALLERY_DL_SITES + GALLERY_DL_ZIP_SITES,
     "Album": [EROME_DOMAIN],
     "Cosplay": [COSPLAYTELE_DOMAIN],
-    "Video": [PORNHUB_DOMAIN, EPORNER_DOMAIN]
+    "Video": [PORNHUB_DOMAIN, EPORNER_DOMAIN, "rule34.xyz"]
 }
 
 COOKIES_FILE_PATH = "pornhub_cookies.txt"

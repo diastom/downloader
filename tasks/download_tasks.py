@@ -117,7 +117,7 @@ def process_erome_album_task(chat_id: int, user_id: int, album_title: str, media
                 for vid_url in videos_to_dl:
                     download_video_task.delay(chat_id=chat_id, url=vid_url, selected_format='best', video_info_json='{}', user_id=user_id, send_completion_message=False)
         await bot.delete_message(chat_id=chat_id, message_id=status_msg.message_id)
-        await bot.send_message(chat_id=chat_id, text="تسک شما کامل شد✅", reply_markup=get_main_menu_keyboard())
+        await bot.send_message(chat_id=chat_id, text="تسک شما کامل شد✅", reply_markup=get_task_done_keyboard())
     helpers.run_async_in_sync(_async_worker())
 
 @celery_app.task(name="tasks.process_gallery_dl_task")
