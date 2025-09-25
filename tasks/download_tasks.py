@@ -20,38 +20,39 @@ from utils.models import PublicArchive
 
 logger = logging.getLogger(__name__)
 
-# Global bot instance for Celery workers
 from utils.bot_instance import bot
 
 def get_bot_instance():
-    """Creates an aiogram Bot instance for Celery tasks."""
     return bot
 
 @celery_app.task(name="tasks.download_video_task")
-def download_video_task(chat_id: int, url: str, selected_format: str, video_info_json: str, user_id: int):
-    """
-    A simplified task that downloads a video, archives it, and sends it to the user.
-    """
+def download_video_task(chat_id: int, url: str, selected_format: str, video_info_json: str, user_id: int, send_completion_message: bool = True):
     video_info = json.loads(video_info_json) if video_info_json else {}
 
     async def _async_worker():
         bot_instance = get_bot_instance()
-        status_message = await bot_instance.send_message(chat_id=chat_id, text="📥 Your video download is starting...")
+        status_message = await bot_instance.send_message(chat_id=chat_id, text="📥 Your video download is starting...") if send_completion_message else None
 
-        if not video_info:
-            info = await asyncio.to_thread(helpers.get_full_video_info, url)
-            if not info:
-                await bot_instance.edit_message_text(text="❌ Could not fetch video metadata.", chat_id=chat_id, message_id=status_message.message_id)
-                return
-            video_info.update(info)
+        try:
+            if not video_info and not url.startswith("file://"):
+                info = await asyncio.to_thread(helpers.get_full_video_info, url)
+                if not info:
+                    if status_message: await bot_instance.edit_message_text(text="❌ Could not fetch video metadata.", chat_id=chat_id, message_id=status_message.message_id)
+                    return
+                video_info.update(info)
 
-        title = helpers.sanitize_filename(video_info.get('title', 'untitled_video'))
+            title = helpers.sanitize_filename(video_info.get('title', 'untitled_video')) or Path(url).stem
 
-        with tempfile.TemporaryDirectory() as temp_dir:
-            try:
-                await bot_instance.edit_message_text(text=f"📥 Downloading: {title}...", chat_id=chat_id, message_id=status_message.message_id)
-                raw_video_path = await asyncio.to_thread(helpers.download_video, url, temp_dir, selected_format)
-                if not raw_video_path: raise Exception("Video download failed.")
+            with tempfile.TemporaryDirectory() as temp_dir:
+                if status_message: await bot_instance.edit_message_text(text=f"📥 Downloading: {title}...", chat_id=chat_id, message_id=status_message.message_id)
+
+                if url.startswith("file://"):
+                    raw_video_path = url.replace("file://", "")
+                else:
+                    raw_video_path = await asyncio.to_thread(helpers.download_video, url, temp_dir, selected_format)
+
+                if not raw_video_path or not os.path.exists(raw_video_path): raise Exception("Video download failed or file not found.")
+
                 repaired_path = os.path.join(temp_dir, "repaired.mp4")
                 if not await asyncio.to_thread(video_processor.repair_video, raw_video_path, repaired_path):
                      repaired_path = raw_video_path
@@ -59,34 +60,44 @@ def download_video_task(chat_id: int, url: str, selected_format: str, video_info
                 generated_thumb_path = os.path.join(temp_dir, "generated_thumb.jpg")
                 thumb_success = await asyncio.to_thread(video_processor.generate_thumbnail_from_video, repaired_path, generated_thumb_path)
                 final_thumb_path = generated_thumb_path if thumb_success else None
-                await bot_instance.edit_message_text(text="📤 Uploading to public archive...", chat_id=chat_id, message_id=status_message.message_id)
+
+                if status_message: await bot_instance.edit_message_text(text="📤 Uploading to public archive...", chat_id=chat_id, message_id=status_message.message_id)
                 public_channel_id = settings.public_archive_channel_id
                 public_message_id = await telegram_api.upload_video(bot=bot_instance, target_chat_id=public_channel_id, file_path=repaired_path, thumb_path=final_thumb_path, caption=title, duration=duration, width=width, height=height)
                 if not public_message_id: raise Exception("Upload to public archive failed.")
-                async with AsyncSessionLocal() as session:
-                    await database.add_public_archive_item(session=session, url=url, message_id=public_message_id, channel_id=public_channel_id)
-                await bot_instance.edit_message_text(text="📨 Sending to you...", chat_id=chat_id, message_id=status_message.message_id)
-                await bot_instance.copy_message(chat_id=chat_id, from_chat_id=public_channel_id, message_id=public_message_id)
-                await bot_instance.delete_message(chat_id=chat_id, message_id=status_message.message_id)
-                await bot_instance.send_message(chat_id=chat_id, text="✅ Download complete.", reply_markup=get_main_menu_keyboard())
-            except Exception as e:
-                logger.error(f"Celery Video Task Error: {e}", exc_info=True)
+
+                if not url.startswith("file://"):
+                    async with AsyncSessionLocal() as session:
+                        await database.add_public_archive_item(session=session, url=url, message_id=public_message_id, channel_id=public_channel_id)
+
+                if status_message: await bot_instance.edit_message_text(text="📨 Sending to you...", chat_id=chat_id, message_id=status_message.message_id)
+
+                reply_markup = get_main_menu_keyboard() if send_completion_message else None
+                await bot_instance.copy_message(chat_id=chat_id, from_chat_id=public_channel_id, message_id=public_message_id, reply_markup=reply_markup)
+
+                if status_message: await bot_instance.delete_message(chat_id=chat_id, message_id=status_message.message_id)
+
+        except Exception as e:
+            logger.error(f"Celery Video Task Error: {e}", exc_info=True)
+            if status_message:
                 await bot_instance.edit_message_text(text=f"❌ An error occurred during video processing: {e}", chat_id=chat_id, message_id=status_message.message_id)
-                await bot_instance.send_message(chat_id=chat_id, text="Please try again or contact an admin.", reply_markup=get_main_menu_keyboard())
+                if send_completion_message:
+                     await bot_instance.send_message(chat_id=chat_id, text="Please try again or contact an admin.", reply_markup=get_main_menu_keyboard())
+
     helpers.run_async_in_sync(_async_worker())
 
 @celery_app.task(name="tasks.process_erome_album_task")
 def process_erome_album_task(chat_id: int, user_id: int, album_title: str, media_urls: dict, choice: str):
     async def _async_worker():
         bot = get_bot_instance()
-        images_to_dl = media_urls.get('images', []) if choice in ['images', 'both'] else []
-        videos_to_dl = media_urls.get('videos', []) if choice in ['videos', 'both'] else []
+        status_msg = await bot.send_message(chat_id=chat_id, text=f"📥 Starting download for '{album_title}'...")
         with tempfile.TemporaryDirectory() as temp_dir:
+            images_to_dl = media_urls.get('images', []) if choice in ['images', 'both'] else []
+            videos_to_dl = media_urls.get('videos', []) if choice in ['videos', 'both'] else []
             if images_to_dl:
-                status_msg = await bot.send_message(chat_id=chat_id, text=f"📥 Downloading {len(images_to_dl)} images for '{album_title}'...")
+                await bot.edit_message_text(text=f"📥 Downloading {len(images_to_dl)} images...", chat_id=chat_id, message_id=status_msg.message_id)
                 for i, img_url in enumerate(images_to_dl):
                     filename = os.path.basename(urllib.parse.urlparse(img_url).path) or f"erome_img_{i}.jpg"
-                    await bot.edit_message_text(text=f"[{i+1}/{len(images_to_dl)}] 🖼️ Downloading {filename}...", chat_id=chat_id, message_id=status_msg.message_id)
                     try:
                         response = requests.get(img_url, headers=helpers.EROME_HEADERS, stream=True, timeout=60)
                         response.raise_for_status()
@@ -95,11 +106,12 @@ def process_erome_album_task(chat_id: int, user_id: int, album_title: str, media
                         await bot.send_photo(chat_id=chat_id, photo=FSInputFile(img_path), caption=filename)
                     except Exception as e:
                         logger.error(f"Failed to download Erome image {img_url}: {e}")
-                        await bot.send_message(chat_id=chat_id, text=f"❌ Failed to process image: {filename}")
-                await bot.delete_message(chat_id=chat_id, message_id=status_msg.message_id)
             if videos_to_dl:
+                await bot.edit_message_text(text=f"📥 Queuing {len(videos_to_dl)} videos for download...", chat_id=chat_id, message_id=status_msg.message_id)
                 for vid_url in videos_to_dl:
-                    download_video_task.delay(chat_id=chat_id, url=vid_url, selected_format='best', video_info_json='{}', user_id=user_id)
+                    download_video_task.delay(chat_id=chat_id, url=vid_url, selected_format='best', video_info_json='{}', user_id=user_id, send_completion_message=False)
+        await bot.delete_message(chat_id=chat_id, message_id=status_msg.message_id)
+        await bot.send_message(chat_id=chat_id, text="تسک شما کامل شد✅", reply_markup=get_main_menu_keyboard())
     helpers.run_async_in_sync(_async_worker())
 
 @celery_app.task(name="tasks.process_gallery_dl_task")
@@ -117,8 +129,8 @@ def process_gallery_dl_task(chat_id: int, url: str, create_zip: bool, user_id: i
                     zip_name = f"{helpers.sanitize_filename(urllib.parse.urlparse(url).netloc)}_gallery.zip"
                     zip_path = os.path.join(os.path.dirname(temp_dir), zip_name)
                     await asyncio.to_thread(helpers.create_zip_from_folder, temp_dir, zip_path)
-                    await bot.edit_message_text(text=f"📤 Uploading ZIP: {zip_name}", chat_id=chat_id, message_id=status_message.message_id)
-                    await bot.send_document(chat_id=chat_id, document=FSInputFile(zip_path), caption=zip_name)
+                    await bot.delete_message(chat_id=chat_id, message_id=status_message.message_id)
+                    await bot.send_document(chat_id=chat_id, document=FSInputFile(zip_path), caption=zip_name, reply_markup=get_main_menu_keyboard())
                 else:
                     total = len(downloaded_files)
                     for i, file_path in enumerate(downloaded_files):
@@ -128,11 +140,11 @@ def process_gallery_dl_task(chat_id: int, url: str, create_zip: bool, user_id: i
                         if ext in ['.jpg', '.jpeg', '.png', '.webp', '.gif']:
                             await bot.send_photo(chat_id=chat_id, photo=FSInputFile(file_path), caption=filename)
                         elif ext in ['.mp4', '.mkv', '.webm', '.mov']:
-                            # Videos from galleries are sent through the standard video download task
-                            download_video_task.delay(chat_id=chat_id, url=f"file://{file_path}", selected_format='best', video_info_json='{}', user_id=user_id)
+                            download_video_task.delay(chat_id=chat_id, url=f"file://{file_path}", selected_format='best', video_info_json=f'{{"title": "{filename}"}}', user_id=user_id, send_completion_message=False)
                         else:
                             await bot.send_document(chat_id=chat_id, document=FSInputFile(file_path), caption=filename)
-                await bot.edit_message_text(text="✅ All files sent successfully.", chat_id=chat_id, message_id=status_message.message_id)
+                    await bot.delete_message(chat_id=chat_id, message_id=status_message.message_id)
+                    await bot.send_message(chat_id=chat_id, text="تسک شما کامل شد✅", reply_markup=get_main_menu_keyboard())
             except Exception as e:
                 logger.error(f"Celery Gallery-DL Task Error: {e}", exc_info=True)
                 await bot.edit_message_text(text=f"❌ An error occurred: {e}", chat_id=chat_id, message_id=status_message.message_id)
@@ -175,11 +187,10 @@ def process_manhwa_task(chat_id: int, manhwa_title: str, chapters_to_download: l
                     if create_zip:
                         zip_path = Path(base_temp_dir) / f"{helpers.sanitize_filename(chapter['name'])}.zip"
                         await asyncio.to_thread(helpers.create_zip_from_folder, str(chapter_temp_folder), str(zip_path))
+                        # Attach keyboard to the final ZIP file
                         await bot.send_document(chat_id=chat_id, document=FSInputFile(zip_path), caption=zip_path.name)
-                    else:
-                        for img_file in sorted(os.listdir(chapter_temp_folder)):
-                            await bot.send_photo(chat_id=chat_id, photo=FSInputFile(chapter_temp_folder / img_file), caption=img_file)
-                await bot.edit_message_text(text=f"✅ All downloads for '{manhwa_title}' are complete.", chat_id=chat_id, message_id=status_message.message_id)
+                await bot.delete_message(chat_id=chat_id, message_id=status_message.message_id)
+                await bot.send_message(chat_id=chat_id, text="تسک شما کامل شد✅", reply_markup=get_main_menu_keyboard())
             except Exception as e:
                 logger.error(f"Celery Manhwa Task Error for {site_key}: {e}", exc_info=True)
                 await bot.edit_message_text(text=f"❌ An error occurred during download: {e}", chat_id=chat_id, message_id=status_message.message_id)
