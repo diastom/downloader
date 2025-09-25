@@ -9,7 +9,7 @@ from config import settings
 from utils import database, helpers, video_processor, telegram_api
 from utils.db_session import AsyncSessionLocal
 from tasks.celery_app import celery_app
-from bot.handlers.common import get_main_menu_keyboard
+from bot.handlers.common import get_task_done_keyboard
 from aiogram.types import File
 
 logger = logging.getLogger(__name__)
@@ -74,9 +74,12 @@ def encode_video_task(user_id: int, username: str, chat_id: int, video_file_id: 
                 chat_id=chat_id,
                 video=FSInputFile(str(final_video_path)),
                 thumbnail=FSInputFile(str(custom_thumb_path)) if custom_thumb_path and custom_thumb_path.exists() else None,
-                caption=f"✅ ویدیوی انکد شده شما: {final_filename}",
-                duration=duration, width=width, height=height,
-                reply_markup=get_main_menu_keyboard()
+                duration=duration, width=width, height=height
+            )
+            await bot_instance.send_message(
+                chat_id=chat_id,
+                text="تسک شما انجام شد✅",
+                reply_markup=get_task_done_keyboard()
             )
 
             private_archive_caption = f"the user: @{username} | {user_id}\n" f"the task: {'/'.join(applied_tasks) or 'none'}"
