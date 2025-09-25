@@ -10,11 +10,9 @@ from utils import database, helpers, video_processor, telegram_api
 from utils.db_session import AsyncSessionLocal
 from tasks.celery_app import celery_app
 from bot.handlers.common import get_task_done_keyboard
-from aiogram.types import File
+from utils.bot_instance import create_bot_instance
 
 logger = logging.getLogger(__name__)
-
-from utils.bot_instance import create_bot_instance
 
 @celery_app.task(name="tasks.encode_video_task")
 def encode_video_task(user_id: int, username: str, chat_id: int, video_file_id: str, options: dict, new_filename: str | None):
@@ -55,7 +53,6 @@ def encode_video_task(user_id: int, username: str, chat_id: int, video_file_id: 
                     applied_tasks.append(f"{options['selected_quality']}p")
                 else:
                     await bot.edit_message_text(f"⚠️ اخطار: تغییر کیفیت انجام نشد، از کیفیت اصلی استفاده می‌شود.", chat_id=chat_id, message_id=status_message.message_id)
-
 
             if options.get("water"):
                 async with AsyncSessionLocal() as session:
@@ -117,6 +114,7 @@ def encode_video_task(user_id: int, username: str, chat_id: int, video_file_id: 
         finally:
             if task_dir.exists():
                 shutil.rmtree(task_dir)
-            await bot.session.close()
+            if bot:
+                await bot.session.close()
 
     helpers.run_async_in_sync(_async_worker())

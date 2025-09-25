@@ -8,7 +8,6 @@ import urllib.parse
 from pathlib import Path
 import concurrent.futures
 
-from aiogram import Bot
 from aiogram.types import FSInputFile
 
 from config import settings
@@ -17,10 +16,9 @@ from utils.db_session import AsyncSessionLocal
 from tasks.celery_app import celery_app
 from bot.handlers.common import get_task_done_keyboard, get_main_menu_keyboard
 from utils.models import PublicArchive
+from utils.bot_instance import create_bot_instance
 
 logger = logging.getLogger(__name__)
-
-from utils.bot_instance import create_bot_instance
 
 @celery_app.task(name="tasks.download_video_task")
 def download_video_task(chat_id: int, url: str, selected_format: str, video_info_json: str, user_id: int, send_completion_message: bool = True):
@@ -97,7 +95,8 @@ def download_video_task(chat_id: int, url: str, selected_format: str, video_info
                     logger.info(f"Cleaned up temporary video file: {video_path_to_clean}")
                 except OSError as e:
                     logger.error(f"Error cleaning up file {video_path_to_clean}: {e}", exc_info=True)
-            await bot.session.close()
+            if bot:
+                await bot.session.close()
 
     helpers.run_async_in_sync(_async_worker())
 
@@ -129,7 +128,8 @@ def process_erome_album_task(chat_id: int, user_id: int, album_title: str, media
             await bot.delete_message(chat_id=chat_id, message_id=status_msg.message_id)
             await bot.send_message(chat_id=chat_id, text="تسک شما کامل شد✅", reply_markup=get_main_menu_keyboard())
         finally:
-            await bot.session.close()
+            if bot:
+                await bot.session.close()
     helpers.run_async_in_sync(_async_worker())
 
 @celery_app.task(name="tasks.process_gallery_dl_task")
@@ -183,7 +183,8 @@ def process_gallery_dl_task(chat_id: int, url: str, create_zip: bool, user_id: i
                 await bot.edit_message_text(text=f"❌ An error occurred: {e}", chat_id=chat_id, message_id=status_message.message_id)
         finally:
             if zip_path and os.path.exists(zip_path): os.remove(zip_path)
-            await bot.session.close()
+            if bot:
+                await bot.session.close()
     helpers.run_async_in_sync(_async_worker())
 
 @celery_app.task(name="tasks.process_manhwa_task")
@@ -235,5 +236,6 @@ def process_manhwa_task(chat_id: int, manhwa_title: str, chapters_to_download: l
                 await bot.edit_message_text(text=f"❌ An error occurred during download: {e}", chat_id=chat_id, message_id=status_message.message_id)
         finally:
             if driver: driver.quit()
-            await bot.session.close()
+            if bot:
+                await bot.session.close()
     helpers.run_async_in_sync(_async_worker())
