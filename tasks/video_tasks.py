@@ -1,104 +1,102 @@
 import asyncio
 import logging
 import os
-import shutil
-from pathlib import Path
+import tempfile
 
-from aiogram.types import FSInputFile
+from aiogram import Bot
+
 from config import settings
-from utils import database, helpers, video_processor, telegram_api
+from utils import database, helpers
 from utils.db_session import AsyncSessionLocal
 from tasks.celery_app import celery_app
-from bot.handlers.common import get_main_menu_keyboard
-from aiogram.types import File
+from utils.video_processor import get_video_metadata, apply_watermark_to_video
+from utils.telegram_api import upload_video
+from utils.telegram_client import get_or_create_personal_archive
 
 logger = logging.getLogger(__name__)
 
+# Initialize a global bot instance for the Celery worker
+# This instance will be used by tasks to communicate with Telegram
 from utils.bot_instance import bot
 
-def get_bot_instance():
-    return bot
 
-@celery_app.task(name="tasks.encode_video_task")
-def encode_video_task(user_id: int, username: str, chat_id: int, video_file_id: str, options: dict, new_filename: str | None):
+@celery_app.task(name="tasks.process_video_customization")
+def process_video_customization_task(user_id: int, chat_id: int, personal_archive_id: int, video_file_id: str, choice: str):
     """
-    A Celery task that performs encoding based on user-selected options.
+    A Celery task that downloads a video, applies user customizations (watermark/thumbnail),
+    and uploads it. Status is reported via a single editable message.
     """
     async def _async_worker():
-        bot_instance = get_bot_instance()
-        status_message = await bot_instance.send_message(chat_id=chat_id, text="⏳ پردازش ویدیوی شما شروع شد...")
+        status_message = None
+        async with AsyncSessionLocal() as session:
+            try:
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    status_message = await bot.send_message(chat_id=chat_id, text="⏳ Your video processing has started...")
 
-        task_dir = Path("encode") / f"task_{user_id}_{os.urandom(4).hex()}"
-        task_dir.mkdir(parents=True, exist_ok=True)
+                    await bot.edit_message_text("📥 Downloading the original video...", chat_id=chat_id, message_id=status_message.message_id)
 
-        try:
-            video_file = await bot_instance.get_file(video_file_id)
+                    video_file = await bot.get_file(video_file_id)
+                    video_path = os.path.join(temp_dir, 'original_video.mp4')
+                    await bot.download_file(video_file.file_path, destination=video_path)
+                    logger.info(f"Video with file_id {video_file_id} downloaded to {video_path}")
 
-            final_filename = new_filename if options.get("rename") and new_filename else (video_file.file_path.split('/')[-1] if video_file.file_path else "video.mp4")
-            original_video_path = task_dir / final_filename
+                    final_video_path = video_path
+                    custom_thumb_path = None
 
-            await bot_instance.edit_message_text("📥 در حال دریافت ویدیوی اصلی...", chat_id=chat_id, message_id=status_message.message_id)
-            await helpers.download_or_copy_file(bot_instance, video_file, original_video_path)
+                    if choice in ['water', 'both']:
+                        await bot.edit_message_text("💧 Applying watermark...", chat_id=chat_id, message_id=status_message.message_id)
+                        watermark_settings_obj = await database.get_user_watermark_settings(session, user_id)
+                        # Convert ORM object to dict for the helper
+                        watermark_settings = {c.name: getattr(watermark_settings_obj, c.name) for c in watermark_settings_obj.__table__.columns}
 
-            final_video_path = original_video_path
-            custom_thumb_path = None
-            applied_tasks = []
-
-            async with AsyncSessionLocal() as session:
-                if options.get("water"):
-                    watermark_settings = await database.get_user_watermark_settings(session, user_id)
-                    if watermark_settings and watermark_settings.enabled:
-                        await bot_instance.edit_message_text("💧 در حال اعمال واترمارک...", chat_id=chat_id, message_id=status_message.message_id)
-                        watermarked_path = task_dir / f"watermarked_{final_filename}"
-                        success = await asyncio.to_thread(
-                            video_processor.apply_watermark_to_video,
-                            str(final_video_path), str(watermarked_path), watermark_settings
+                        final_video_path = await asyncio.to_thread(
+                            video_processor.apply_watermark_to_video, video_path, watermark_settings
                         )
-                        if success:
-                            final_video_path = watermarked_path
-                            applied_tasks.append("water")
+                        if not final_video_path:
+                            raise Exception("Failed to apply watermark.")
 
-                if options.get("thumb"):
-                    thumbnail_id = await database.get_user_thumbnail(session, user_id)
-                    if thumbnail_id:
-                        await bot_instance.edit_message_text("🖼️ در حال دریافت تامبنیل...", chat_id=chat_id, message_id=status_message.message_id)
-                        thumb_file = await bot_instance.get_file(thumbnail_id)
-                        custom_thumb_path = task_dir / f"thumb_{user_id}.jpg"
-                        await helpers.download_or_copy_file(bot_instance, thumb_file, custom_thumb_path)
-                        applied_tasks.append("thumb")
+                    if choice in ['thumb', 'both']:
+                        custom_thumbnail_id = await database.get_user_thumbnail(session, user_id)
+                        if custom_thumbnail_id:
+                            await bot.edit_message_text("🖼️ Preparing thumbnail...", chat_id=chat_id, message_id=status_message.message_id)
+                            thumb_file = await bot.get_file(custom_thumbnail_id)
+                            custom_thumb_path = os.path.join(temp_dir, 'thumb.jpg')
+                            await bot.download_file(thumb_file.file_path, destination=custom_thumb_path)
 
-            await bot_instance.edit_message_text("📤 در حال آپلود ویدیوی نهایی...", chat_id=chat_id, message_id=status_message.message_id)
-            duration, width, height = await asyncio.to_thread(video_processor.get_video_metadata, str(final_video_path))
+                personal_archive_id = await telegram_client.get_or_create_personal_archive(session, user_id, (await bot.get_me()).username)
+                if not personal_archive_id:
+                    raise Exception("Failed to get or create personal archive.")
 
-            await bot_instance.send_video(
-                chat_id=chat_id,
-                video=FSInputFile(str(final_video_path)),
-                thumbnail=FSInputFile(str(custom_thumb_path)) if custom_thumb_path and custom_thumb_path.exists() else None,
-                caption=f"✅ ویدیوی انکد شده شما: {final_filename}",
-                duration=duration, width=width, height=height,
-                reply_markup=get_main_menu_keyboard()
-            )
+                await bot.edit_message_text("📤 Uploading the final video...", chat_id=chat_id, message_id=status_message.message_id)
+                duration, width, height = await asyncio.to_thread(get_video_metadata, final_video_path)
 
-            private_archive_caption = f"the user: @{username} | {user_id}\n" f"the task: {'/'.join(applied_tasks) or 'none'}"
-            await telegram_api.upload_video(
-                bot=bot_instance, target_chat_id=settings.private_archive_channel_id, file_path=str(final_video_path),
-                thumb_path=str(custom_thumb_path) if custom_thumb_path and custom_thumb_path.exists() else None,
-                caption=private_archive_caption,
-                duration=duration, width=width, height=height
-            )
-
-            await bot_instance.delete_message(chat_id=chat_id, message_id=status_message.message_id)
-
-        except Exception as e:
-            logger.error(f"Error in encode_video_task for user {user_id}: {e}", exc_info=True)
-            if status_message:
-                await bot_instance.edit_message_text(
-                    text=f"❌ خطایی در حین پردازش ویدیو رخ داد: {e}",
-                    chat_id=chat_id, message_id=status_message.message_id
+                uploaded_message_id = await upload_video(
+                    bot=bot,
+                    target_chat_id=personal_archive_id,
+                    file_path=final_video_path,
+                    thumb_path=custom_thumb_path,
+                    caption=f"Edited for {user_id}",
+                    duration=duration, width=width, height=height
                 )
-                await bot_instance.send_message(chat_id=chat_id, text="لطفا دوباره تلاش کنید.", reply_markup=get_main_menu_keyboard())
-        finally:
-            if task_dir.exists():
-                shutil.rmtree(task_dir)
+                if not uploaded_message_id:
+                    raise Exception("Failed to upload the final video.")
 
+                await bot.edit_message_text("✅ Your video is ready! Sending it now...", chat_id=chat_id, message_id=status_message.message_id)
+                await bot.copy_message(
+                    chat_id=chat_id,
+                    from_chat_id=personal_archive_id,
+                    message_id=uploaded_message_id
+                )
+
+                await bot.delete_message(chat_id=chat_id, message_id=status_message.message_id)
+
+            except Exception as e:
+                logger.error(f"Error in video processing task for user {user_id}: {e}", exc_info=True)
+                error_text = f"❌ An error occurred while processing your video:\n`{e}`"
+                if status_message:
+                    await bot.edit_message_text(error_text, chat_id=chat_id, message_id=status_message.message_id, parse_mode="Markdown")
+                else:
+                    await bot.send_message(chat_id=chat_id, text=error_text, parse_mode="Markdown")
+
+    # Safely run the async worker from the synchronous Celery task
     helpers.run_async_in_sync(_async_worker())

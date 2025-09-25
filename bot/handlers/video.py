@@ -60,6 +60,7 @@ async def handle_encode_video_entry(message: types.Message, state: FSMContext):
         "file_size": message.video.file_size,
         "options": {"rename": False, "thumb": False, "water": False}
     }
+    await state.update_data(initial_data) # This is the crucial fix
     panel_text, keyboard = await get_encode_panel(state)
     await message.answer(panel_text, reply_markup=keyboard)
 
@@ -69,7 +70,6 @@ async def handle_toggle_option(query: types.CallbackQuery, state: FSMContext, se
     action = query.data.replace("enc_toggle_", "")
     user_id = query.from_user.id
 
-    # Check for subscription access before allowing the toggle
     if action == "thumb":
         if not await database.has_feature_access(session, user_id, 'thumbnail'):
             await query.answer("اشتراک شما شامل قابلیت تامبنیل نمی‌شود.", show_alert=True)

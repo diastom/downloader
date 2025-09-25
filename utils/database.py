@@ -41,17 +41,21 @@ async def get_or_create_user(session: AsyncSession, user_id: int, username: str 
             sub_download_limit=-1,
             sub_allowed_sites=default_allowed_sites,
             stats_site_usage={},
+            # The new 'allow_thumbnail' and 'allow_watermark' fields will use their default values (True) from the model.
         )
         session.add(user)
 
+        # Create default watermark settings for the new user
         watermark = models.WatermarkSetting(user=user, text=f"@{settings.bot_token.split(':')[0]}")
         session.add(watermark)
 
         await session.commit()
 
+        # Re-fetch the user to ensure relationships are loaded correctly
         result = await session.execute(stmt)
         user = result.scalar_one()
 
+    # Update username if it has changed
     if username and user.username != username:
         user.username = username
         await session.commit()
@@ -98,14 +102,16 @@ async def get_user_thumbnail(session: AsyncSession, user_id: int) -> str | None:
 # --- Watermark ---
 async def get_user_watermark_settings(session: AsyncSession, user_id: int) -> models.WatermarkSetting:
     user = await get_or_create_user(session, user_id)
+    # Ensure a watermark settings object exists if one wasn't created with the user
     if user.watermark is None:
         watermark = models.WatermarkSetting(user_id=user_id, text=f"@{settings.bot_token.split(':')[0]}")
         session.add(watermark)
         await session.commit()
-        await session.refresh(user, ['watermark'])
+        await session.refresh(user, ['watermark']) # Refresh the user to load the new relationship
     return user.watermark
 
 async def update_user_watermark_settings(session: AsyncSession, user_id: int, new_settings: dict):
+    # This function is now simpler as get_user_watermark_settings ensures the object exists
     watermark = await get_user_watermark_settings(session, user_id)
     for key, value in new_settings.items():
         if hasattr(watermark, key):
@@ -138,32 +144,11 @@ async def log_download_activity(session: AsyncSession, user_id: int, domain: str
     if user.stats_site_usage is None:
         user.stats_site_usage = {}
 
+    # Create a copy to modify, then assign back
     new_site_usage = user.stats_site_usage.copy()
     new_site_usage[domain] = new_site_usage.get(domain, 0) + 1
     user.stats_site_usage = new_site_usage
 
     flag_modified(user, "stats_site_usage")
-    await session.commit()
 
-# --- Public Archive ---
-async def get_public_archive_item(session: AsyncSession, url_hash: str) -> models.PublicArchive | None:
-    """
-    Retrieves a public archive item by its URL hash.
-    """
-    stmt = select(models.PublicArchive).where(models.PublicArchive.url_hash == url_hash)
-    result = await session.execute(stmt)
-    return result.scalar_one_or_none()
-
-
-async def add_public_archive_item(session: AsyncSession, url: str, message_id: int, channel_id: int):
-    """
-    Adds a new item to the public archive.
-    """
-    url_hash = models.PublicArchive.create_hash(url)
-    new_item = models.PublicArchive(
-        url_hash=url_hash,
-        message_id=message_id,
-        channel_id=channel_id
-    )
-    session.add(new_item)
     await session.commit()

@@ -8,16 +8,13 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file='.env', env_file_encoding='utf-8')
 
     bot_token: str
+    api_id: int
+    api_hash: str
 
-    public_archive_channel_id: int
-    private_archive_channel_id: int
+    # We now only use the session string.
+    session_string: str
 
-    # --- Optional: For Local Bot API Server ---
-    # Set to True if you are running your own Bot API server.
-    local_bot_api_enabled: bool = False
-    # The absolute base path where your local Bot API server stores files.
-    local_bot_api_server_data_dir: str | None = None
-
+    public_archive_chat_id: int
     redis_url: str = "redis://localhost:6379/0"
     admin_ids_str: str
     database_url: str = "postgresql+asyncpg://user:password@localhost:5432/dlbot_db"
