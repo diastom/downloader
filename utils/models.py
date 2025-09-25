@@ -1,4 +1,5 @@
 import hashlib
+from datetime import datetime
 from sqlalchemy import (
     Column,
     Integer,
@@ -34,8 +35,15 @@ class User(Base):
     stats_site_usage = Column(JSONB)
 
     # Relationships
-    thumbnail = relationship("Thumbnail", back_populates="user", uselist=False)
+    thumbnails = relationship(
+        "Thumbnail",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        order_by="Thumbnail.id",
+    )
     watermark = relationship("WatermarkSetting", back_populates="user", uselist=False)
+    activity = relationship("UserActivity", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    download_logs = relationship("DownloadLog", back_populates="user", cascade="all, delete-orphan")
 
 
 class Thumbnail(Base):
@@ -45,7 +53,7 @@ class Thumbnail(Base):
     id = Column(Integer, primary_key=True)
     user_id = Column(BigInteger, ForeignKey('public.users.id'), nullable=False)
     file_id = Column(String, nullable=False)
-    user = relationship("User", back_populates="thumbnail")
+    user = relationship("User", back_populates="thumbnails")
 
 
 class WatermarkSetting(Base):
@@ -95,3 +103,28 @@ class BotText(Base):
     __table_args__ = {"schema": "public"}
     key = Column(String, primary_key=True, index=True)
     value = Column(String, nullable=False)
+
+
+class UserActivity(Base):
+    __tablename__ = "user_activity"
+    __table_args__ = {"schema": "public"}
+
+    user_id = Column(BigInteger, ForeignKey("public.users.id"), primary_key=True)
+    first_seen = Column(DateTime, nullable=False, default=datetime.utcnow)
+    last_seen = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    user = relationship("User", back_populates="activity")
+
+
+class DownloadLog(Base):
+    __tablename__ = "download_logs"
+    __table_args__ = {"schema": "public"}
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    user_id = Column(BigInteger, ForeignKey("public.users.id"), nullable=False, index=True)
+    domain = Column(String, nullable=False)
+    task_type = Column(String, nullable=False, default="download")
+    size_bytes = Column(BigInteger, nullable=False, default=0)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow, index=True)
+
+    user = relationship("User", back_populates="download_logs")
