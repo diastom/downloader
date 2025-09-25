@@ -130,5 +130,6 @@ def repair_video(initial_path: str, repaired_path: str) -> bool:
         ffmpeg.input(initial_path).output(repaired_path, c='copy', loglevel='error').run(overwrite_output=True)
         return True
     except ffmpeg.Error as e:
-        logger.error(f"[ffmpeg] Error during stream copy: {e.stderr.decode()}")
+        error_message = e.stderr.decode() if e.stderr else "No stderr output"
+        logger.error(f"[ffmpeg] Error during stream copy: {error_message}")
         return False

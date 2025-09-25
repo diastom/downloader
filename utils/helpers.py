@@ -174,7 +174,8 @@ def download_video(url: str, temp_dir: str, format_id: str) -> str | None:
 
 async def run_gallery_dl_download(url: str, temp_dir: str) -> Tuple[List[str] | None, str | None]:
     logger.info(f"[gallery-dl] Starting download: {url}")
-    command = ['gallery-dl', '-D', temp_dir, url]
+    # Use a simple filename format to avoid issues with long names
+    command = ['gallery-dl', '-D', temp_dir, '--filename', '{id}.{extension}', url]
     process = await asyncio.create_subprocess_exec(*command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
     _, stderr = await process.communicate()
     if process.returncode != 0:
