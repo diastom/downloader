@@ -10,7 +10,13 @@ class Settings(BaseSettings):
     bot_token: str
 
     public_archive_channel_id: int
-    private_archive_channel_id: int # New: For encoded videos
+    private_archive_channel_id: int
+
+    # --- Optional: For Local Bot API Server ---
+    # Set to True if you are running your own Bot API server.
+    local_bot_api_enabled: bool = False
+    # The absolute base path where your local Bot API server stores files.
+    local_bot_api_server_data_dir: str | None = None
 
     redis_url: str = "redis://localhost:6379/0"
     admin_ids_str: str
