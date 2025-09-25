@@ -60,7 +60,7 @@ async def handle_encode_video_entry(message: types.Message, state: FSMContext):
         "file_size": message.video.file_size,
         "options": {"rename": False, "thumb": False, "water": False}
     }
-    await state.update_data(initial_data)
+    await state.update_data(**initial_data)
     panel_text, keyboard = await get_encode_panel(state)
     await message.answer(panel_text, reply_markup=keyboard)
 
