@@ -41,6 +41,22 @@ def encode_video_task(user_id: int, username: str, chat_id: int, video_file_id: 
             custom_thumb_path = None
             applied_tasks = []
 
+            if options.get("selected_quality") and options["selected_quality"] != "original":
+                await bot.edit_message_text(f"🌇 در حال تغییر کیفیت به {options['selected_quality']}p...", chat_id=chat_id, message_id=status_message.message_id)
+                transcoded_path = task_dir / f"transcoded_{final_filename}"
+                success = await asyncio.to_thread(
+                    video_processor.transcode_video,
+                    str(final_video_path),
+                    str(transcoded_path),
+                    int(options["selected_quality"])
+                )
+                if success:
+                    final_video_path = transcoded_path
+                    applied_tasks.append(f"{options['selected_quality']}p")
+                else:
+                    await bot.edit_message_text(f"⚠️ اخطار: تغییر کیفیت انجام نشد، از کیفیت اصلی استفاده می‌شود.", chat_id=chat_id, message_id=status_message.message_id)
+
+
             if options.get("water"):
                 async with AsyncSessionLocal() as session:
                     watermark_settings = await database.get_user_watermark_settings(session, user_id)

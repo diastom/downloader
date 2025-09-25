@@ -35,7 +35,6 @@ class DownloadFSM(StatesGroup):
     manhwa_awaiting_zip_option = State()
     gallery_awaiting_zip_option = State()
     erome_awaiting_choice = State()
-    yt_dlp_selecting_quality = State()
 
 # --- Main Link Handler ---
 @router.message(UserFlow.downloading, F.text.regexp(URL_REGEX))
@@ -84,27 +83,16 @@ async def handle_link(message: types.Message, state: FSMContext, session: AsyncS
     elif domain == helpers.EROME_DOMAIN:
         await handle_erome_link(message, state, url)
     elif domain in VIDEO_DOMAINS:
-        await handle_yt_dlp_link(message, state, url)
+        await message.answer("✅ Request for video download has been added to the queue.")
+        download_tasks.download_video_task.delay(
+            chat_id=message.chat.id,
+            url=url,
+            selected_format="bestvideo[height<=1080]+bestaudio/best",
+            video_info_json='{}',
+            user_id=message.from_user.id
+        )
     else:
         await message.answer("Could not determine the correct downloader for this site.")
-
-
-async def handle_yt_dlp_link(message: types.Message, state: FSMContext, url: str):
-    status_msg = await message.answer("🔎 Extracting video information...")
-    info = await asyncio.to_thread(helpers.get_full_video_info, url)
-    if not info:
-        await status_msg.edit_text("❌ Error: Could not extract video information.")
-        return
-    formats = [f for f in info.get('formats', []) if f.get('vcodec') != 'none' and f.get('height')]
-    if not formats:
-        await status_msg.edit_text("No downloadable video qualities found.")
-        return
-    best_formats = {f['height']: f for f in sorted(formats, key=lambda x: x.get('tbr') or 0, reverse=True) if f.get('height')}
-    await state.set_state(DownloadFSM.yt_dlp_selecting_quality)
-    await state.update_data(yt_info=info, yt_url=url, user_id=message.from_user.id)
-    keyboard = [[types.InlineKeyboardButton(text=f"{h}p ({(f.get('filesize') or f.get('filesize_approx') or 0) / (1024*1024):.2f} MB)", callback_data=f"yt_{f['format_id']}")] for h, f in sorted(best_formats.items(), reverse=True)]
-    keyboard.append([types.InlineKeyboardButton(text="Best Quality (Auto)", callback_data='yt_best')])
-    await status_msg.edit_text(f"✅ Qualities for '{info.get('title', 'video')}':", reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard))
 
 async def handle_erome_link(message: types.Message, state: FSMContext, url: str):
     status_msg = await message.answer("🔎 Analyzing Erome album, this may take a moment...")
@@ -180,16 +168,6 @@ async def handle_manhwa_link(message: types.Message, state: FSMContext, url: str
         if driver: driver.quit()
 
 # --- FSM Callback Handlers ---
-
-@router.callback_query(DownloadFSM.yt_dlp_selecting_quality, F.data.startswith("yt_"))
-async def handle_yt_dlp_quality_choice(query: types.CallbackQuery, state: FSMContext):
-    await query.answer()
-    selected_format = query.data.split('_', 1)[1]
-    data = await state.get_data()
-    await query.message.edit_text(f"✅ Request for '{data.get('yt_info', {}).get('title', 'video')}' added to queue.")
-    download_tasks.download_video_task.delay(chat_id=query.message.chat.id, url=data['yt_url'], selected_format=selected_format, video_info_json=json.dumps(data['yt_info']), user_id=data['user_id'])
-    await state.clear()
-
 
 @router.callback_query(DownloadFSM.erome_awaiting_choice, F.data.startswith("er_choice_"))
 async def handle_erome_choice(query: types.CallbackQuery, state: FSMContext):

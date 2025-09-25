@@ -133,3 +133,22 @@ def repair_video(initial_path: str, repaired_path: str) -> bool:
         error_message = e.stderr.decode() if e.stderr else "No stderr output"
         logger.error(f"[ffmpeg] Error during stream copy: {error_message}")
         return False
+
+def transcode_video(input_path: str, output_path: str, height: int) -> bool:
+    """
+    Transcodes a video to a specific height, preserving aspect ratio.
+    """
+    logger.info(f"[ffmpeg] Transcoding video to {height}p...")
+    try:
+        (
+            ffmpeg
+            .input(input_path)
+            .output(output_path, vf=f'scale=-2:{height}', preset='fast', crf=24)
+            .overwrite_output()
+            .run(capture_stdout=True, capture_stderr=True)
+        )
+        logger.info(f"Video successfully transcoded to {output_path}")
+        return True
+    except ffmpeg.Error as e:
+        logger.error(f"Error during transcoding: {e.stderr.decode()}", exc_info=True)
+        return False
