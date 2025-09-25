@@ -22,6 +22,13 @@ def get_main_menu_keyboard():
         [InlineKeyboardButton(text="🎬 انکد", callback_data="start_encode")]
     ])
 
+def get_task_done_keyboard():
+    """Returns the keyboard for the task done message."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📥 دانلود", callback_data="start_download")],
+        [InlineKeyboardButton(text="🎬 انکد", callback_data="start_encode")]
+    ])
+
 @router.message(CommandStart())
 async def handle_start(message: types.Message, state: FSMContext, session: AsyncSession):
     """
