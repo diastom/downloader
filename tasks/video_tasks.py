@@ -41,28 +41,29 @@ def encode_video_task(user_id: int, username: str, chat_id: int, video_file_id: 
             custom_thumb_path = None
             applied_tasks = []
 
-            async with AsyncSessionLocal() as session:
-                if options.get("water"):
+            if options.get("water"):
+                async with AsyncSessionLocal() as session:
                     watermark_settings = await database.get_user_watermark_settings(session, user_id)
-                    if watermark_settings and watermark_settings.enabled:
-                        await bot.edit_message_text("💧 در حال اعمال واترمارک...", chat_id=chat_id, message_id=status_message.message_id)
-                        watermarked_path = task_dir / f"watermarked_{final_filename}"
-                        success = await asyncio.to_thread(
-                            video_processor.apply_watermark_to_video,
-                            str(final_video_path), str(watermarked_path), watermark_settings
-                        )
-                        if success:
-                            final_video_path = watermarked_path
-                            applied_tasks.append("water")
+                if watermark_settings and watermark_settings.enabled:
+                    await bot.edit_message_text("💧 در حال اعمال واترمارک...", chat_id=chat_id, message_id=status_message.message_id)
+                    watermarked_path = task_dir / f"watermarked_{final_filename}"
+                    success = await asyncio.to_thread(
+                        video_processor.apply_watermark_to_video,
+                        str(final_video_path), str(watermarked_path), watermark_settings
+                    )
+                    if success:
+                        final_video_path = watermarked_path
+                        applied_tasks.append("water")
 
-                if options.get("thumb"):
+            if options.get("thumb"):
+                async with AsyncSessionLocal() as session:
                     thumbnail_id = await database.get_user_thumbnail(session, user_id)
-                    if thumbnail_id:
-                        await bot.edit_message_text("🖼️ در حال دریافت تامبنیل...", chat_id=chat_id, message_id=status_message.message_id)
-                        thumb_file = await bot.get_file(thumbnail_id)
-                        custom_thumb_path = task_dir / f"thumb_{user_id}.jpg"
-                        await helpers.download_or_copy_file(bot, thumb_file, custom_thumb_path)
-                        applied_tasks.append("thumb")
+                if thumbnail_id:
+                    await bot.edit_message_text("🖼️ در حال دریافت تامبنیل...", chat_id=chat_id, message_id=status_message.message_id)
+                    thumb_file = await bot.get_file(thumbnail_id)
+                    custom_thumb_path = task_dir / f"thumb_{user_id}.jpg"
+                    await helpers.download_or_copy_file(bot, thumb_file, custom_thumb_path)
+                    applied_tasks.append("thumb")
 
             await bot.edit_message_text("📤 در حال آپلود ویدیوی نهایی...", chat_id=chat_id, message_id=status_message.message_id)
             duration, width, height = await asyncio.to_thread(video_processor.get_video_metadata, str(final_video_path))
