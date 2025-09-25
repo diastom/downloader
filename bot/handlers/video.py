@@ -1,139 +1,78 @@
 import logging
-from pathlib import Path
 from aiogram import Router, types, F
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from sqlalchemy.ext.asyncio import AsyncSession
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from bot.handlers.common import UserFlow
-from tasks import video_tasks
+from sqlalchemy.ext.asyncio import AsyncSession
+from tasks import video_tasks # Import the task module
 from utils import database
 
 logger = logging.getLogger(__name__)
 router = Router()
 
-class EncodeFSM(StatesGroup):
-    choosing_options = State()
-    awaiting_new_name = State()
+# --- FSM States ---
+class VideoEditFSM(StatesGroup):
+    awaiting_choice = State()
 
-# --- Helper Functions ---
+# --- FSM Handlers ---
+@router.message(F.video)
+async def handle_user_video(message: types.Message, state: FSMContext, session: AsyncSession):
+    """
+    Entry point for the video editing flow. Triggers when a user sends a video.
+    """
+    user = await database.get_or_create_user(session, user_id=message.from_user.id)
 
-async def get_encode_panel(state: FSMContext) -> tuple[str, InlineKeyboardMarkup]:
-    """Generates the text and keyboard for the encoding panel."""
-    data = await state.get_data()
-    options = data.get("options", {})
-    size_mb = data.get('file_size', 0) / (1024 * 1024)
+    # We need the personal archive to upload the customized video to.
+    # The creation logic is called inside the task if it doesn't exist.
+    personal_archive_id = user.personal_archive_id
 
-    panel_text = (
-        f"🎬 **پنل تنظیمات انکد**\n\n"
-        f"🔹 **نام فایل:** `{data.get('filename')}`\n"
-        f"🔹 **حجم تقریبی:** `{size_mb:.2f} MB`\n\n"
-        "با کلیک روی دکمه‌ها، گزینه‌های مورد نظر را فعال/غیرفعال کنید و سپس 'شروع عملیات' را بزنید."
-    )
-
-    rename_check = "✅" if options.get("rename") else "❌"
-    thumb_check = "✅" if options.get("thumb") else "❌"
-    water_check = "✅" if options.get("water") else "❌"
+    # Store the video's file_id in the FSM state for later retrieval
+    await state.update_data(video_file_id=message.video.file_id, personal_archive_id=personal_archive_id)
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text=f"تغییر نام فایل {rename_check}", callback_data="enc_toggle_rename"),
-            InlineKeyboardButton(text=f"اعمال تامبنیل {thumb_check}", callback_data="enc_toggle_thumb")
-        ],
-        [InlineKeyboardButton(text=f"اعمال واترمارک {water_check}", callback_data="enc_toggle_water")],
-        [InlineKeyboardButton(text="🚀 شروع عملیات", callback_data="enc_start")],
-        [InlineKeyboardButton(text="انصراف ❌", callback_data="enc_cancel")]
+        [InlineKeyboardButton("🖼️ تنظیم تامبنیل", callback_data="vid_edit_thumb")],
+        [InlineKeyboardButton("💧 تنظیم واترمارک", callback_data="vid_edit_water")],
+        [InlineKeyboardButton("🖼️💧 تنظیم هر دو", callback_data="vid_edit_both")],
+        [InlineKeyboardButton("❌ لغو", callback_data="vid_edit_cancel")],
     ])
-    return panel_text, keyboard
 
-# --- Handlers ---
+    await message.answer("می‌خواهید با این ویدیو چه کاری انجام دهید؟", reply_markup=keyboard)
+    await state.set_state(VideoEditFSM.awaiting_choice)
 
-@router.message(UserFlow.encoding, F.video)
-async def handle_encode_video_entry(message: types.Message, state: FSMContext):
-    """Entry point for the advanced encoding panel."""
-    await state.set_state(EncodeFSM.choosing_options)
-    initial_data = {
-        "video_file_id": message.video.file_id,
-        "original_filename": message.video.file_name or "video.mp4",
-        "filename": message.video.file_name or "video.mp4",
-        "file_size": message.video.file_size,
-        "options": {"rename": False, "thumb": False, "water": False}
-    }
-    await state.update_data(initial_data) # This is the crucial fix
-    panel_text, keyboard = await get_encode_panel(state)
-    await message.answer(panel_text, reply_markup=keyboard)
 
-@router.callback_query(EncodeFSM.choosing_options, F.data.startswith("enc_toggle_"))
-async def handle_toggle_option(query: types.CallbackQuery, state: FSMContext, session: AsyncSession):
-    """Toggles the selected option and redraws the panel."""
-    action = query.data.replace("enc_toggle_", "")
-    user_id = query.from_user.id
+@router.callback_query(VideoEditFSM.awaiting_choice, F.data.startswith("vid_edit_"))
+async def process_video_edit_choice(query: types.CallbackQuery, state: FSMContext):
+    """
+    Handles the user's choice for video customization and dispatches the Celery task.
+    """
+    choice = query.data.replace("vid_edit_", "")
 
-    if action == "thumb":
-        if not await database.has_feature_access(session, user_id, 'thumbnail'):
-            await query.answer("اشتراک شما شامل قابلیت تامبنیل نمی‌شود.", show_alert=True)
-            return
-    elif action == "water":
-        if not await database.has_feature_access(session, user_id, 'watermark'):
-            await query.answer("اشتراک شما شامل قابلیت واترمارک نمی‌شود.", show_alert=True)
-            return
-
-    data = await state.get_data()
-    options = data.get("options", {})
-    options[action] = not options.get(action, False)
-    await state.update_data(options=options)
-
-    if action == "rename" and options[action]:
-        await state.set_state(EncodeFSM.awaiting_new_name)
-        await query.message.edit_text("لطفاً نام جدید فایل را (بدون پسوند) ارسال کنید:", reply_markup=None)
-    else:
-        panel_text, keyboard = await get_encode_panel(state)
-        await query.message.edit_text(panel_text, reply_markup=keyboard)
-    await query.answer()
-
-@router.callback_query(EncodeFSM.choosing_options, F.data == "enc_start")
-async def handle_start_button(query: types.CallbackQuery, state: FSMContext, session: AsyncSession):
-    """Checks prerequisites and starts the encoding task if they are met."""
-    data = await state.get_data()
-    options = data.get("options", {})
-    user_id = query.from_user.id
-
-    if options.get("thumb") and not await database.get_user_thumbnail(session, user_id):
-        await query.answer("خطا: شما اعمال تامبنیل را انتخاب کرده‌اید اما تامبنیلی تنظیم نکرده‌اید. لطفاً با /thumb تنظیم کنید و دوباره امتحان کنید.", show_alert=True)
+    if choice == 'cancel':
+        await query.message.edit_text("عملیات لغو شد.")
+        await state.clear()
         return
 
-    watermark_settings = await database.get_user_watermark_settings(session, user_id)
-    if options.get("water") and not watermark_settings.enabled:
-        await query.answer("خطا: شما اعمال واترمارک را انتخاب کرده‌اید اما واترمارک شما غیرفعال است. لطفاً با /water آن را فعال کنید و دوباره امتحان کنید.", show_alert=True)
+    state_data = await state.get_data()
+    video_file_id = state_data.get('video_file_id')
+    personal_archive_id = state_data.get('personal_archive_id') # Will be created if None inside the task
+
+    if not video_file_id:
+        await query.message.edit_text("خطا: اطلاعات ویدیو یافت نشد. لطفاً دوباره تلاش کنید.")
+        await state.clear()
         return
 
-    await query.message.edit_text("✅ درخواست شما به صف انکد اضافه شد...")
-    video_tasks.encode_video_task.delay(
-        user_id=user_id,
-        username=query.from_user.username or "N/A",
+    await query.message.edit_text("✅ درخواست شما به صف پردازش اضافه شد. لطفاً منتظر بمانید...")
+
+    # Dispatch the background task to Celery
+    video_tasks.process_video_customization_task.delay(
+        user_id=query.from_user.id,
         chat_id=query.message.chat.id,
-        video_file_id=data['video_file_id'],
-        options=options,
-        new_filename=data.get('filename')
+        personal_archive_id=personal_archive_id,
+        video_file_id=video_file_id,
+        choice=choice
     )
+
+    # Clear the state after dispatching the task
     await state.clear()
-
-@router.message(EncodeFSM.awaiting_new_name, F.text)
-async def receive_new_filename(message: types.Message, state: FSMContext):
-    """Receives the new filename and returns to the panel."""
-    data = await state.get_data()
-    original_ext = Path(data['original_filename']).suffix
-    new_filename = f"{message.text.strip()}{original_ext}"
-    await state.update_data(filename=new_filename)
-
-    await state.set_state(EncodeFSM.choosing_options)
-    panel_text, keyboard = await get_encode_panel(state)
-    await message.answer(panel_text, reply_markup=keyboard)
-    await message.delete()
-
-@router.callback_query(EncodeFSM.choosing_options, F.data == "enc_cancel")
-async def handle_cancel_encoding(query: types.CallbackQuery, state: FSMContext):
-    await query.message.delete()
-    await state.clear()
-    await query.answer("عملیات لغو شد.")
+    await query.answer()
