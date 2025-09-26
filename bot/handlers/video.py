@@ -19,6 +19,7 @@ class EncodeFSM(StatesGroup):
     awaiting_new_name = State()
     choosing_quality = State()
     choosing_thumbnail = State()
+    choosing_watermark = State()
 
 # --- Helper Functions ---
 
@@ -39,8 +40,15 @@ async def get_encode_panel(state: FSMContext) -> tuple[str, InlineKeyboardMarkup
         f"• کیفیت خروجی: `{quality_text}`",
     ]
 
-    if options.get("thumb") and options.get("thumb_index"):
-        panel_lines.append(f"🖼️ تامبنیل انتخاب شده: شماره {options['thumb_index']}")
+    if options.get("thumb"):
+        thumb_label = options.get("thumb_name") or (
+            f"شماره {options['thumb_index']}" if options.get("thumb_index") else None
+        )
+        if thumb_label:
+            panel_lines.append(f"🖼️ تامبنیل انتخاب شده: {thumb_label}")
+
+    if options.get("water") and options.get("watermark_name"):
+        panel_lines.append(f"💧 واترمارک انتخاب شده: {options['watermark_name']}")
 
     panel_lines.append("")
     panel_lines.append(
@@ -163,14 +171,15 @@ async def handle_toggle_option(query: types.CallbackQuery, state: FSMContext, se
             elif len(thumbnails) == 1:
                 options["thumb_id"] = thumbnails[0].id
                 options["thumb_index"] = 1
+                options["thumb_name"] = thumbnails[0].display_name or "تامبنیل 1"
                 await query.answer("تامبنیل شما فعال شد.")
             else:
                 await state.update_data(options=options)
                 await state.set_state(EncodeFSM.choosing_thumbnail)
-                buttons = [
-                    [InlineKeyboardButton(text=f"تامبنیل {idx + 1}", callback_data=f"enc_thumb_{thumb.id}")]
-                    for idx, thumb in enumerate(thumbnails)
-                ]
+                buttons = []
+                for idx, thumb in enumerate(thumbnails):
+                    name = thumb.display_name or f"تامبنیل {idx + 1}"
+                    buttons.append([InlineKeyboardButton(text=name, callback_data=f"enc_thumb_{thumb.id}")])
                 buttons.append([InlineKeyboardButton(text="🔙 بازگشت", callback_data="enc_thumb_back")])
                 await query.message.edit_text(
                     "لطفاً یکی از تامبنیل‌های خود را برای اعمال انتخاب کنید:",
@@ -181,6 +190,44 @@ async def handle_toggle_option(query: types.CallbackQuery, state: FSMContext, se
         else:
             options.pop("thumb_id", None)
             options.pop("thumb_index", None)
+            options.pop("thumb_name", None)
+
+    if action == "water":
+        if options[action]:
+            watermarks = await database.get_user_watermarks(session, user_id)
+            if not watermarks:
+                options[action] = False
+                await query.answer("ابتدا باید با /water حداقل یک واترمارک بسازید.", show_alert=True)
+            elif len(watermarks) == 1:
+                options["watermark_id"] = watermarks[0].id
+                options["watermark_name"] = watermarks[0].display_name or "واترمارک 1"
+                if not watermarks[0].enabled:
+                    await query.answer("این واترمارک غیرفعال است. برای فعال‌سازی از /water استفاده کنید.", show_alert=True)
+                else:
+                    await query.answer("واترمارک شما فعال شد.")
+            else:
+                await state.update_data(options=options)
+                await state.set_state(EncodeFSM.choosing_watermark)
+                buttons = []
+                for idx, watermark in enumerate(watermarks, start=1):
+                    name = watermark.display_name or f"واترمارک {idx}"
+                    status = "✅" if watermark.enabled else "❌"
+                    buttons.append([
+                        InlineKeyboardButton(
+                            text=f"{status} {name}",
+                            callback_data=f"enc_water_{watermark.id}"
+                        )
+                    ])
+                buttons.append([InlineKeyboardButton(text="🔙 بازگشت", callback_data="enc_water_back")])
+                await query.message.edit_text(
+                    "لطفاً یکی از واترمارک‌های خود را برای اعمال انتخاب کنید:",
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+                )
+                await query.answer("یک واترمارک انتخاب کنید.")
+                return
+        else:
+            options.pop("watermark_id", None)
+            options.pop("watermark_name", None)
 
     await state.update_data(options=options)
 
@@ -208,10 +255,19 @@ async def handle_start_button(query: types.CallbackQuery, state: FSMContext, ses
         await query.answer("لطفاً یکی از تامبنیل‌های خود را انتخاب کنید.", show_alert=True)
         return
 
-    watermark_settings = await database.get_user_watermark_settings(session, user_id)
-    if options.get("water") and not watermark_settings.enabled:
-        await query.answer("خطا: شما اعمال واترمارک را انتخاب کرده‌اید اما واترمارک شما غیرفعال است. لطفاً با /water آن را فعال کنید و دوباره امتحان کنید.", show_alert=True)
-        return
+    if options.get("water"):
+        watermark_id = options.get("watermark_id")
+        if not watermark_id:
+            await query.answer("لطفاً یکی از واترمارک‌های خود را انتخاب کنید.", show_alert=True)
+            return
+
+        watermark_settings = await database.get_user_watermark_by_id(session, user_id, watermark_id)
+        if watermark_settings is None:
+            await query.answer("واترمارک انتخاب‌شده پیدا نشد. لطفاً دوباره انتخاب کنید.", show_alert=True)
+            return
+        if not watermark_settings.enabled:
+            await query.answer("واترمارک انتخاب‌شده غیرفعال است. لطفاً از /water آن را فعال کنید.", show_alert=True)
+            return
 
     can_start, limit, used_today = await database.can_user_start_task(session, user_id)
     if not can_start:
@@ -272,12 +328,58 @@ async def handle_thumbnail_selected(query: types.CallbackQuery, state: FSMContex
     options["thumb"] = True
     options["thumb_id"] = thumb_id
     options["thumb_index"] = index
+    options["thumb_name"] = thumbnails[index - 1].display_name or f"تامبنیل {index}"
     await state.update_data(options=options)
 
     await state.set_state(EncodeFSM.choosing_options)
     panel_text, keyboard = await get_encode_panel(state)
     await query.message.edit_text(panel_text, reply_markup=keyboard)
     await query.answer("تامبنیل انتخاب شد.")
+
+
+@router.callback_query(EncodeFSM.choosing_watermark, F.data == "enc_water_back")
+async def handle_watermark_back(query: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    options = data.get("options", {})
+    options["water"] = False
+    options.pop("watermark_id", None)
+    options.pop("watermark_name", None)
+    await state.update_data(options=options)
+
+    await state.set_state(EncodeFSM.choosing_options)
+    panel_text, keyboard = await get_encode_panel(state)
+    await query.message.edit_text(panel_text, reply_markup=keyboard)
+    await query.answer("انتخاب واترمارک لغو شد.")
+
+
+@router.callback_query(EncodeFSM.choosing_watermark, F.data.startswith("enc_water_"))
+async def handle_watermark_selected(query: types.CallbackQuery, state: FSMContext, session: AsyncSession):
+    watermark_id_str = query.data.replace("enc_water_", "")
+    try:
+        watermark_id = int(watermark_id_str)
+    except ValueError:
+        await query.answer("شناسه واترمارک نامعتبر است.", show_alert=True)
+        return
+
+    watermark = await database.get_user_watermark_by_id(session, query.from_user.id, watermark_id)
+    if not watermark:
+        await query.answer("این واترمارک موجود نیست یا حذف شده است.", show_alert=True)
+        return
+
+    data = await state.get_data()
+    options = data.get("options", {})
+    options["water"] = True
+    options["watermark_id"] = watermark_id
+    options["watermark_name"] = watermark.display_name or "واترمارک انتخابی"
+    await state.update_data(options=options)
+
+    await state.set_state(EncodeFSM.choosing_options)
+    panel_text, keyboard = await get_encode_panel(state)
+    await query.message.edit_text(panel_text, reply_markup=keyboard)
+    if watermark.enabled:
+        await query.answer("واترمارک انتخاب شد.")
+    else:
+        await query.answer("این واترمارک در حال حاضر غیرفعال است. لطفاً از /water آن را فعال کنید.", show_alert=True)
 
 @router.message(EncodeFSM.awaiting_new_name, F.text)
 async def receive_new_filename(message: types.Message, state: FSMContext):
