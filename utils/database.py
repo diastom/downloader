@@ -58,6 +58,67 @@ async def get_or_create_user(session: AsyncSession, user_id: int, username: str 
 
     return user
 
+async def get_user_daily_task_count(session: AsyncSession, user_id: int) -> int:
+    """Returns the number of tasks the user has started today."""
+    now = datetime.utcnow()
+    today_start = datetime(now.year, now.month, now.day)
+    stmt = (
+        select(func.count(models.TaskUsage.id))
+        .where(
+            models.TaskUsage.user_id == user_id,
+            models.TaskUsage.created_at >= today_start,
+        )
+    )
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none() or 0
+
+
+async def can_user_start_task(session: AsyncSession, user_id: int, tasks_needed: int = 1) -> tuple[bool, int, int]:
+    """
+    Checks whether the user still has daily task quota remaining.
+
+    Returns a tuple of (allowed, limit, used_today).
+    """
+    user = await get_or_create_user(session, user_id)
+    limit = user.sub_download_limit or 0
+
+    tasks_today = await get_user_daily_task_count(session, user_id)
+    if user.sub_download_limit == -1:
+        return True, -1, tasks_today
+
+    return tasks_today + tasks_needed <= limit, limit, tasks_today
+
+
+async def record_task_usage(
+    session: AsyncSession,
+    user_id: int,
+    task_type: str,
+    commit: bool = True,
+) -> models.TaskUsage:
+    """Records a generic task usage entry for daily limit tracking."""
+    usage = models.TaskUsage(
+        user_id=user_id,
+        task_type=task_type,
+        created_at=datetime.utcnow(),
+    )
+    session.add(usage)
+
+    if commit:
+        await session.commit()
+        await session.refresh(usage)
+
+    return usage
+
+
+def format_task_limit_message(limit: int, used_today: int) -> str:
+    """Returns a localized message explaining the daily task limit."""
+    return (
+        "سقف استفاده روزانه شما به پایان رسیده است.\n"
+        f"حداکثر تسک مجاز در روز: {limit}\n"
+        f"تسک‌های انجام‌شده امروز: {used_today}\n"
+        "لطفاً فردا دوباره تلاش کنید."
+    )
+
 async def get_all_users(session: AsyncSession) -> list[models.User]:
     """Retrieves all users from the database."""
     stmt = select(models.User)

@@ -81,7 +81,7 @@ async def _process_download_link(message: types.Message, state: FSMContext, sess
     elif domain == helpers.EROME_DOMAIN:
         await handle_erome_link(message, state, url)
     elif domain in VIDEO_DOMAINS:
-        await handle_yt_dlp_link(message, state, url)
+        await handle_yt_dlp_link(message, state, url, session)
     else:
         await message.answer("Could not determine the correct downloader for this site.")
 
@@ -99,7 +99,16 @@ async def auto_start_download(message: types.Message, state: FSMContext, session
     await _process_download_link(message, state, session, bot)
 
 
-async def handle_yt_dlp_link(message: types.Message, state: FSMContext, url: str):
+async def _reserve_task_slot(session: AsyncSession, user_id: int, task_type: str = "download") -> tuple[bool, str | None]:
+    allowed, limit, used_today = await database.can_user_start_task(session, user_id)
+    if not allowed:
+        return False, database.format_task_limit_message(limit, used_today)
+
+    await database.record_task_usage(session, user_id, task_type)
+    return True, None
+
+
+async def handle_yt_dlp_link(message: types.Message, state: FSMContext, url: str, session: AsyncSession):
     status_msg = await message.answer("🔎 Extracting video information...")
     info = await asyncio.to_thread(helpers.get_full_video_info, url)
     if not info:
@@ -121,6 +130,12 @@ async def handle_yt_dlp_link(message: types.Message, state: FSMContext, url: str
         return
     quality_display = f"{height}p" if height else "Best available"
     size_display = f"{approx_size:.2f} MB" if approx_size else "نامشخص"
+    allowed, error_message = await _reserve_task_slot(session, message.from_user.id)
+    if not allowed:
+        await status_msg.edit_text(error_message)
+        await state.clear()
+        return
+
     await status_msg.edit_text(
         "🎯 بهترین کیفیت موجود انتخاب شد.\n"
         f"کیفیت خروجی: {quality_display}\n"
@@ -213,7 +228,7 @@ async def handle_manhwa_link(message: types.Message, state: FSMContext, url: str
 # --- FSM Callback Handlers ---
 
 @router.callback_query(DownloadFSM.erome_awaiting_choice, F.data.startswith("er_choice_"))
-async def handle_erome_choice(query: types.CallbackQuery, state: FSMContext):
+async def handle_erome_choice(query: types.CallbackQuery, state: FSMContext, session: AsyncSession):
     await query.answer()
     choice = query.data.replace("er_choice_", "")
     data = await state.get_data()
@@ -224,6 +239,12 @@ async def handle_erome_choice(query: types.CallbackQuery, state: FSMContext):
 
     if not all([title, media, user_id]):
         await query.message.edit_text("Error: Download information has expired. Please send the link again.")
+        await state.clear()
+        return
+
+    allowed, error_message = await _reserve_task_slot(session, user_id)
+    if not allowed:
+        await query.message.edit_text(error_message)
         await state.clear()
         return
 
@@ -240,10 +261,16 @@ async def handle_erome_choice(query: types.CallbackQuery, state: FSMContext):
 
 
 @router.callback_query(DownloadFSM.gallery_awaiting_zip_option, F.data.startswith("gdl_zip_"))
-async def handle_gallery_dl_zip_choice(query: types.CallbackQuery, state: FSMContext):
+async def handle_gallery_dl_zip_choice(query: types.CallbackQuery, state: FSMContext, session: AsyncSession):
     await query.answer()
     create_zip = query.data == "gdl_zip_yes"
     data = await state.get_data()
+    allowed, error_message = await _reserve_task_slot(session, query.from_user.id)
+    if not allowed:
+        await query.message.edit_text(error_message)
+        await state.clear()
+        return
+
     await query.message.edit_text(f"✅ Request for '{urllib.parse.urlparse(data['gdl_url']).netloc}' added to queue.")
     download_tasks.process_gallery_dl_task.delay(query.message.chat.id, data['gdl_url'], create_zip=create_zip, user_id=data['user_id'])
     await state.clear()
@@ -277,11 +304,17 @@ async def handle_manhwa_chapter_selection(query: types.CallbackQuery, state: FSM
     await query.message.edit_reply_markup(reply_markup=keyboard)
 
 @router.callback_query(DownloadFSM.manhwa_awaiting_zip_option, F.data.startswith("manhwa_zip_"))
-async def handle_manhwa_zip_choice(query: types.CallbackQuery, state: FSMContext):
+async def handle_manhwa_zip_choice(query: types.CallbackQuery, state: FSMContext, session: AsyncSession):
     await query.answer()
     create_zip = query.data == "manhwa_zip_yes"
     data = await state.get_data()
     chapters_to_download = [data['chapters'][i] for i in sorted(data['selected_indices'])]
+    allowed, error_message = await _reserve_task_slot(session, query.from_user.id)
+    if not allowed:
+        await query.message.edit_text(error_message)
+        await state.clear()
+        return
+
     await query.message.edit_text(f"✅ Request for {len(chapters_to_download)} chapters of '{data['title']}' sent to queue.")
     download_tasks.process_manhwa_task.delay(
         chat_id=query.message.chat.id,

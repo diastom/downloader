@@ -13,6 +13,7 @@ from utils.models import (
     PublicArchive,
     BotText,
     DownloadRecord,
+    TaskUsage,
 )
 
 async def create_db_tables():
