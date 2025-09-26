@@ -99,7 +99,10 @@ def encode_video_task(user_id: int, username: str, chat_id: int, video_file_id: 
                 chat_id=chat_id,
                 video=FSInputFile(str(final_video_path)),
                 thumbnail=FSInputFile(str(custom_thumb_path)) if custom_thumb_path and custom_thumb_path.exists() else None,
-                duration=duration, width=width, height=height
+                duration=duration,
+                width=width,
+                height=height,
+                supports_streaming=True,
             )
             await bot.send_message(
                 chat_id=chat_id,
