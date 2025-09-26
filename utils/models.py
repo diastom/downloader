@@ -1,12 +1,14 @@
 import hashlib
+from datetime import datetime
+
 from sqlalchemy import (
-    Column,
-    Integer,
-    String,
+    BigInteger,
     Boolean,
+    Column,
     DateTime,
     ForeignKey,
-    BigInteger,
+    Integer,
+    String,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
@@ -21,6 +23,7 @@ class User(Base):
     id = Column(BigInteger, primary_key=True)
     username = Column(String)
     is_admin = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     # Subscription details
     sub_is_active = Column(Boolean, default=False)
@@ -41,6 +44,12 @@ class User(Base):
         order_by="Thumbnail.id",
     )
     watermark = relationship("WatermarkSetting", back_populates="user", uselist=False)
+    download_records = relationship(
+        "DownloadRecord",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        order_by="DownloadRecord.id",
+    )
 
 
 class Thumbnail(Base):
@@ -100,3 +109,16 @@ class BotText(Base):
     __table_args__ = {"schema": "public"}
     key = Column(String, primary_key=True, index=True)
     value = Column(String, nullable=False)
+
+
+class DownloadRecord(Base):
+    __tablename__ = "download_records"
+    __table_args__ = {"schema": "public"}
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(BigInteger, ForeignKey("public.users.id"), nullable=False)
+    domain = Column(String, nullable=False)
+    bytes_downloaded = Column(BigInteger, default=0, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    user = relationship("User", back_populates="download_records")

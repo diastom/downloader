@@ -1,7 +1,7 @@
 import logging
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -177,19 +177,118 @@ async def set_text(session: AsyncSession, key: str, value: str):
         session.add(bot_text)
     await session.commit()
 
-# --- Stats ---
-async def log_download_activity(session: AsyncSession, user_id: int, domain: str):
-    user = await get_or_create_user(session, user_id)
-
+def _update_user_site_usage(user: models.User, domain: str) -> None:
     if user.stats_site_usage is None:
         user.stats_site_usage = {}
 
     new_site_usage = user.stats_site_usage.copy()
     new_site_usage[domain] = new_site_usage.get(domain, 0) + 1
     user.stats_site_usage = new_site_usage
-
     flag_modified(user, "stats_site_usage")
+
+
+async def record_download_event(
+    session: AsyncSession,
+    user_id: int,
+    domain: str,
+    bytes_downloaded: int,
+) -> models.DownloadRecord:
+    """Logs a completed download event for analytics purposes."""
+    user = await get_or_create_user(session, user_id)
+    _update_user_site_usage(user, domain)
+
+    record = models.DownloadRecord(
+        user_id=user_id,
+        domain=domain,
+        bytes_downloaded=max(0, bytes_downloaded),
+        created_at=datetime.utcnow(),
+    )
+    session.add(record)
     await session.commit()
+    await session.refresh(record)
+    return record
+
+
+async def get_bot_statistics(session: AsyncSession) -> dict:
+    """Aggregates bot-wide statistics for the admin dashboard."""
+    now = datetime.utcnow()
+    today_start = datetime(now.year, now.month, now.day)
+
+    total_users = await session.scalar(select(func.count(models.User.id))) or 0
+    users_today = (
+        await session.scalar(
+            select(func.count(models.User.id)).where(models.User.created_at >= today_start)
+        )
+        or 0
+    )
+
+    active_subs = (
+        await session.scalar(
+            select(func.count(models.User.id)).where(
+                models.User.sub_is_active.is_(True),
+                (models.User.sub_expiry_date.is_(None)) | (models.User.sub_expiry_date >= now),
+            )
+        )
+        or 0
+    )
+
+    expired_subs = (
+        await session.scalar(
+            select(func.count(models.User.id)).where(
+                models.User.sub_expiry_date.is_not(None),
+                models.User.sub_expiry_date < now,
+            )
+        )
+        or 0
+    )
+
+    total_downloads = (
+        await session.scalar(select(func.count(models.DownloadRecord.id)))
+    ) or 0
+    downloads_today = (
+        await session.scalar(
+            select(func.count(models.DownloadRecord.id)).where(
+                models.DownloadRecord.created_at >= today_start
+            )
+        )
+    ) or 0
+
+    total_bytes = (
+        await session.scalar(
+            select(func.coalesce(func.sum(models.DownloadRecord.bytes_downloaded), 0))
+        )
+    ) or 0
+    today_bytes = (
+        await session.scalar(
+            select(func.coalesce(func.sum(models.DownloadRecord.bytes_downloaded), 0)).where(
+                models.DownloadRecord.created_at >= today_start
+            )
+        )
+    ) or 0
+
+    top_sites_stmt = (
+        select(
+            models.DownloadRecord.domain,
+            func.count(models.DownloadRecord.id).label("downloads"),
+        )
+        .group_by(models.DownloadRecord.domain)
+        .order_by(func.count(models.DownloadRecord.id).desc())
+        .limit(3)
+    )
+    top_sites_result = await session.execute(top_sites_stmt)
+    top_sites = [row.domain for row in top_sites_result.all()]
+
+    return {
+        "total_users": total_users,
+        "users_today": users_today,
+        "active_subscriptions": active_subs,
+        "expired_subscriptions": expired_subs,
+        "total_downloads": total_downloads,
+        "downloads_today": downloads_today,
+        "total_bytes": total_bytes,
+        "today_bytes": today_bytes,
+        "top_sites": top_sites,
+    }
 
 # --- Public Archive ---
 async def get_public_archive_item(session: AsyncSession, url_hash: str) -> models.PublicArchive | None:
