@@ -79,7 +79,18 @@ def encode_video_task(user_id: int, username: str, chat_id: int, video_file_id: 
                     thumb_file = await bot.get_file(thumbnail_id)
                     custom_thumb_path = task_dir / f"thumb_{user_id}.jpg"
                     await helpers.download_or_copy_file(bot, thumb_file, custom_thumb_path)
-                    applied_tasks.append("thumb")
+                    thumb_ready = await asyncio.to_thread(
+                        video_processor.prepare_thumbnail_image,
+                        custom_thumb_path,
+                    )
+                    if thumb_ready:
+                        applied_tasks.append("thumb")
+                    else:
+                        logger.warning(
+                            "Custom thumbnail for user %s could not be prepared and will be skipped.",
+                            user_id,
+                        )
+                        custom_thumb_path = None
 
             await bot.edit_message_text("📤 در حال آپلود ویدیوی نهایی...", chat_id=chat_id, message_id=status_message.message_id)
             duration, width, height = await asyncio.to_thread(video_processor.get_video_metadata, str(final_video_path))

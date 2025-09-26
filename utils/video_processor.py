@@ -1,4 +1,5 @@
 import ffmpeg
+import io
 import os
 import logging
 import shlex
@@ -6,10 +7,14 @@ import subprocess
 from typing import Tuple
 from pathlib import Path
 
+from PIL import Image, ImageOps
+
 from utils.models import WatermarkSetting # Import the model
 
 # --- Constants ---
 FONT_FILE = str(Path(__file__).parent.parent / "Aviny.ttf")
+THUMBNAIL_MAX_DIMENSION = 320
+THUMBNAIL_MAX_FILE_SIZE = 200 * 1024  # 200 KB as required by Telegram
 logger = logging.getLogger(__name__)
 
 
@@ -100,6 +105,74 @@ def generate_thumbnail_from_video(video_path: str, output_path: str) -> bool:
         return True
     except ffmpeg.Error as e:
         logger.error(f"Error generating thumbnail: {e.stderr.decode()}")
+        return False
+
+
+def prepare_thumbnail_image(image_path: str | Path) -> bool:
+    """Ensure a thumbnail image complies with Telegram's requirements.
+
+    Telegram only accepts JPEG thumbnails that are at most 320x320 pixels and
+    smaller than 200 KB. This helper converts the downloaded image to JPEG,
+    keeps the aspect ratio, resizes it to fit within the allowed dimensions,
+    and progressively lowers the quality until the size requirement is met.
+
+    Args:
+        image_path: The path to the downloaded image file.
+
+    Returns:
+        bool: ``True`` if the image is within the allowed limits after
+        processing, ``False`` otherwise.
+    """
+
+    path = Path(image_path)
+    if not path.exists():
+        logger.warning(f"Thumbnail path does not exist: {path}")
+        return False
+
+    try:
+        with Image.open(path) as img:
+            img = ImageOps.exif_transpose(img)
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+
+            img.thumbnail((THUMBNAIL_MAX_DIMENSION, THUMBNAIL_MAX_DIMENSION), Image.LANCZOS)
+
+            buffer = io.BytesIO()
+            quality = 90
+            min_quality = 25
+            success = False
+
+            while quality >= min_quality:
+                buffer.seek(0)
+                buffer.truncate(0)
+                img.save(buffer, format="JPEG", optimize=True, quality=quality)
+                if buffer.tell() <= THUMBNAIL_MAX_FILE_SIZE:
+                    success = True
+                    break
+                quality -= 5
+
+            if not success:
+                buffer.seek(0)
+                buffer.truncate(0)
+                img.save(buffer, format="JPEG", optimize=True, quality=min_quality)
+
+        path.write_bytes(buffer.getvalue())
+        final_size = path.stat().st_size
+
+        if final_size > THUMBNAIL_MAX_FILE_SIZE:
+            logger.warning(
+                "Thumbnail at %s still exceeds %d bytes after compression (current size: %d bytes)",
+                path,
+                THUMBNAIL_MAX_FILE_SIZE,
+                final_size,
+            )
+            return False
+
+        logger.info("Thumbnail at %s prepared successfully (%d bytes).", path, final_size)
+        return True
+
+    except Exception as error:  # pylint: disable=broad-except
+        logger.error("Failed to prepare thumbnail %s: %s", path, error, exc_info=True)
         return False
 
 def repair_video(initial_path: str, repaired_path: str) -> bool:
