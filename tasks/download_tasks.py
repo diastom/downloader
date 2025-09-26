@@ -1,4 +1,5 @@
 import asyncio
+import concurrent.futures
 import json
 import logging
 import os
@@ -6,9 +7,9 @@ import shutil
 import tempfile
 import urllib.parse
 from pathlib import Path
-import concurrent.futures
 
 from aiogram.types import FSInputFile
+import requests
 
 from config import settings
 from utils import database, helpers, telegram_api, video_processor
@@ -21,7 +22,15 @@ from utils.bot_instance import create_bot_instance
 logger = logging.getLogger(__name__)
 
 @celery_app.task(name="tasks.download_video_task")
-def download_video_task(chat_id: int, url: str, selected_format: str, video_info_json: str, user_id: int, send_completion_message: bool = True):
+def download_video_task(
+    chat_id: int,
+    url: str,
+    selected_format: str,
+    video_info_json: str,
+    user_id: int,
+    send_completion_message: bool = True,
+    source_domain: str | None = None,
+):
     video_info = json.loads(video_info_json) if video_info_json else {}
 
     async def _async_worker():
@@ -33,6 +42,7 @@ def download_video_task(chat_id: int, url: str, selected_format: str, video_info
             video_path_to_clean = url.replace("file://", "")
 
         try:
+            resolved_domain = source_domain or urllib.parse.urlparse(url).netloc.lower().replace("www.", "")
             if not video_info and not url.startswith("file://"):
                 info = await asyncio.to_thread(helpers.get_full_video_info, url)
                 if not info:
@@ -72,6 +82,16 @@ def download_video_task(chat_id: int, url: str, selected_format: str, video_info
                 if status_message: await bot.edit_message_text(text="📨 Sending to you...", chat_id=chat_id, message_id=status_message.message_id)
 
                 await bot.copy_message(chat_id=chat_id, from_chat_id=public_channel_id, message_id=public_message_id)
+
+                if resolved_domain:
+                    file_size = os.path.getsize(repaired_path) if os.path.exists(repaired_path) else 0
+                    async with AsyncSessionLocal() as session:
+                        await database.record_download_event(
+                            session,
+                            user_id=user_id,
+                            domain=resolved_domain,
+                            bytes_downloaded=file_size,
+                        )
 
                 if status_message: await bot.delete_message(chat_id=chat_id, message_id=status_message.message_id)
 
@@ -119,12 +139,27 @@ def process_erome_album_task(chat_id: int, user_id: int, album_title: str, media
                             img_path = os.path.join(temp_dir, filename)
                             with open(img_path, 'wb') as f: shutil.copyfileobj(response.raw, f)
                             await bot.send_photo(chat_id=chat_id, photo=FSInputFile(img_path), caption=filename)
+                            async with AsyncSessionLocal() as session:
+                                await database.record_download_event(
+                                    session,
+                                    user_id=user_id,
+                                    domain=urllib.parse.urlparse(img_url).netloc.lower().replace("www.", ""),
+                                    bytes_downloaded=os.path.getsize(img_path) if os.path.exists(img_path) else 0,
+                                )
                         except Exception as e:
                             logger.error(f"Failed to download Erome image {img_url}: {e}")
                 if videos_to_dl:
                     await bot.edit_message_text(text=f"📥 Queuing {len(videos_to_dl)} videos for download...", chat_id=chat_id, message_id=status_msg.message_id)
                     for vid_url in videos_to_dl:
-                        download_video_task.delay(chat_id=chat_id, url=vid_url, selected_format='best', video_info_json='{}', user_id=user_id, send_completion_message=False)
+                        download_video_task.delay(
+                            chat_id=chat_id,
+                            url=vid_url,
+                            selected_format='best',
+                            video_info_json='{}',
+                            user_id=user_id,
+                            send_completion_message=False,
+                            source_domain=urllib.parse.urlparse(vid_url).netloc.lower().replace("www.", ""),
+                        )
             await bot.delete_message(chat_id=chat_id, message_id=status_msg.message_id)
             await bot.send_message(chat_id=chat_id, text="تسک شما کامل شد✅", reply_markup=get_main_menu_keyboard())
         finally:
@@ -139,6 +174,7 @@ def process_gallery_dl_task(chat_id: int, url: str, create_zip: bool, user_id: i
         status_message = None
         zip_path = None
         try:
+            parsed_domain = urllib.parse.urlparse(url).netloc.lower().replace("www.", "")
             status_message = await bot.send_message(chat_id=chat_id, text=f"📥 Request for '{urllib.parse.urlparse(url).netloc}' received...")
             with tempfile.TemporaryDirectory() as temp_dir:
                 downloaded_files, error = await helpers.run_gallery_dl_download(url, temp_dir)
@@ -150,6 +186,13 @@ def process_gallery_dl_task(chat_id: int, url: str, create_zip: bool, user_id: i
                     await asyncio.to_thread(helpers.create_zip_from_folder, temp_dir, zip_path)
                     await bot.delete_message(chat_id=chat_id, message_id=status_message.message_id)
                     await bot.send_document(chat_id=chat_id, document=FSInputFile(zip_path), caption=zip_name, reply_markup=get_main_menu_keyboard())
+                    async with AsyncSessionLocal() as session:
+                        await database.record_download_event(
+                            session,
+                            user_id=user_id,
+                            domain=parsed_domain,
+                            bytes_downloaded=os.path.getsize(zip_path) if os.path.exists(zip_path) else 0,
+                        )
                 else:
                     total = len(downloaded_files)
                     for i, file_path in enumerate(downloaded_files):
@@ -158,6 +201,13 @@ def process_gallery_dl_task(chat_id: int, url: str, create_zip: bool, user_id: i
                         ext = os.path.splitext(filename)[1].lower()
                         if ext in ['.jpg', '.jpeg', '.png', '.webp', '.gif']:
                             await bot.send_photo(chat_id=chat_id, photo=FSInputFile(file_path), caption=filename)
+                            async with AsyncSessionLocal() as session:
+                                await database.record_download_event(
+                                    session,
+                                    user_id=user_id,
+                                    domain=parsed_domain,
+                                    bytes_downloaded=os.path.getsize(file_path) if os.path.exists(file_path) else 0,
+                                )
                         elif ext in ['.mp4', '.mkv', '.webm', '.mov']:
                             try:
                                 with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False, dir=tempfile.gettempdir()) as temp_vid:
@@ -168,13 +218,21 @@ def process_gallery_dl_task(chat_id: int, url: str, create_zip: bool, user_id: i
                                         selected_format='best',
                                         video_info_json=f'{{"title": "{filename}"}}',
                                         user_id=user_id,
-                                        send_completion_message=False
+                                        send_completion_message=False,
+                                        source_domain=parsed_domain,
                                     )
                             except Exception as e:
                                 logger.error(f"Failed to move and queue video {filename}: {e}", exc_info=True)
                                 await bot.send_message(chat_id=chat_id, text=f"⚠️ Could not process video: {filename}")
                         else:
                             await bot.send_document(chat_id=chat_id, document=FSInputFile(file_path), caption=filename)
+                            async with AsyncSessionLocal() as session:
+                                await database.record_download_event(
+                                    session,
+                                    user_id=user_id,
+                                    domain=parsed_domain,
+                                    bytes_downloaded=os.path.getsize(file_path) if os.path.exists(file_path) else 0,
+                                )
                     await bot.delete_message(chat_id=chat_id, message_id=status_message.message_id)
                     await bot.send_message(chat_id=chat_id, text="تسک شما کامل شد✅", reply_markup=get_task_done_keyboard())
         except Exception as e:
@@ -188,7 +246,14 @@ def process_gallery_dl_task(chat_id: int, url: str, create_zip: bool, user_id: i
     helpers.run_async_in_sync(_async_worker())
 
 @celery_app.task(name="tasks.process_manhwa_task")
-def process_manhwa_task(chat_id: int, manhwa_title: str, chapters_to_download: list, create_zip: bool, site_key: str):
+def process_manhwa_task(
+    chat_id: int,
+    user_id: int,
+    manhwa_title: str,
+    chapters_to_download: list,
+    create_zip: bool,
+    site_key: str,
+):
     site_configs = {'toonily.com': {'get_images': helpers.get_chapter_image_urls_com, 'needs_selenium': True}, 'toonily.me': {'get_images': helpers.mn2_get_chapter_images, 'needs_selenium': False}, 'manhwaclan.com': {'get_images': helpers.mc_get_chapter_image_urls, 'needs_selenium': False}, 'mangadistrict.com': {'get_images': helpers.md_get_chapter_image_urls, 'needs_selenium': False}, 'comick.io': {'get_images': helpers.cm_get_chapter_image_urls, 'needs_selenium': False}}
     config = site_configs.get(site_key)
     async def _async_worker():
@@ -224,9 +289,23 @@ def process_manhwa_task(chat_id: int, manhwa_title: str, chapters_to_download: l
                         zip_path = Path(base_temp_dir) / f"{helpers.sanitize_filename(chapter['name'])}.zip"
                         await asyncio.to_thread(helpers.create_zip_from_folder, str(chapter_temp_folder), str(zip_path))
                         await bot.send_document(chat_id=chat_id, document=FSInputFile(zip_path), caption=zip_path.name)
+                        async with AsyncSessionLocal() as session:
+                            await database.record_download_event(
+                                session,
+                                user_id=user_id,
+                                domain=site_key,
+                                bytes_downloaded=os.path.getsize(zip_path) if os.path.exists(zip_path) else 0,
+                            )
                     else:
                         for image_file in sorted(chapter_temp_folder.glob('*.jpg')):
                             await bot.send_photo(chat_id=chat_id, photo=FSInputFile(image_file))
+                            async with AsyncSessionLocal() as session:
+                                await database.record_download_event(
+                                    session,
+                                    user_id=user_id,
+                                    domain=site_key,
+                                    bytes_downloaded=os.path.getsize(image_file) if image_file.exists() else 0,
+                                )
 
                 await bot.delete_message(chat_id=chat_id, message_id=status_message.message_id)
                 await bot.send_message(chat_id=chat_id, text="تسک شما انجام شد✅", reply_markup=get_task_done_keyboard())

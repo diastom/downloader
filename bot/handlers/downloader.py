@@ -53,8 +53,6 @@ async def _process_download_link(message: types.Message, state: FSMContext, sess
         await message.answer(reason)
         return
 
-    await database.log_download_activity(session, user_id, domain)
-
     # --- Video duplicate check ---
     if domain in VIDEO_DOMAINS:
         url_hash = PublicArchive.create_hash(url)
@@ -64,6 +62,7 @@ async def _process_download_link(message: types.Message, state: FSMContext, sess
             await message.answer("This video has been downloaded before. Forwarding it to you...")
             try:
                 await bot.copy_message(chat_id=user_id, from_chat_id=archived_item.channel_id, message_id=archived_item.message_id)
+                await database.record_download_event(session, user_id, domain, 0)
                 await bot.send_message(
                     chat_id=user_id,
                     text="تسک شما انجام شد ✅",
@@ -133,7 +132,8 @@ async def handle_yt_dlp_link(message: types.Message, state: FSMContext, url: str
         url=url,
         selected_format=format_id,
         video_info_json=json.dumps(info),
-        user_id=message.from_user.id
+        user_id=message.from_user.id,
+        source_domain=urllib.parse.urlparse(url).netloc.lower().replace("www.", ""),
     )
     await state.clear()
 
@@ -283,5 +283,12 @@ async def handle_manhwa_zip_choice(query: types.CallbackQuery, state: FSMContext
     data = await state.get_data()
     chapters_to_download = [data['chapters'][i] for i in sorted(data['selected_indices'])]
     await query.message.edit_text(f"✅ Request for {len(chapters_to_download)} chapters of '{data['title']}' sent to queue.")
-    download_tasks.process_manhwa_task.delay(chat_id=query.message.chat.id, manhwa_title=data['title'], chapters_to_download=chapters_to_download, create_zip=create_zip, site_key=data['prefix'])
+    download_tasks.process_manhwa_task.delay(
+        chat_id=query.message.chat.id,
+        user_id=query.from_user.id,
+        manhwa_title=data['title'],
+        chapters_to_download=chapters_to_download,
+        create_zip=create_zip,
+        site_key=data['prefix']
+    )
     await state.clear()

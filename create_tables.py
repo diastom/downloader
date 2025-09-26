@@ -5,7 +5,15 @@ from config import settings
 from utils.db_session import Base
 
 # All your models need to be imported here for SQLAlchemy to see them
-from utils.models import User, Thumbnail, WatermarkSetting, UrlCache, PublicArchive, BotText
+from utils.models import (
+    User,
+    Thumbnail,
+    WatermarkSetting,
+    UrlCache,
+    PublicArchive,
+    BotText,
+    DownloadRecord,
+)
 
 async def create_db_tables():
     """
