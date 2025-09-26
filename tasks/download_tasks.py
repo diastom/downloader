@@ -21,6 +21,90 @@ from utils.bot_instance import create_bot_instance
 
 logger = logging.getLogger(__name__)
 
+
+@celery_app.task(name="tasks.process_cosplaytele_images_task")
+def process_cosplaytele_images_task(chat_id: int, user_id: int, image_urls: list[str], page_slug: str):
+    async def _async_worker():
+        bot = create_bot_instance()
+        status_message = await bot.send_message(
+            chat_id=chat_id,
+            text=f"📥 در حال دانلود {len(image_urls)} عکس از CosplayTele...",
+        )
+
+        total_downloaded_bytes = 0
+        try:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                download_jobs: list[tuple[str, str]] = []
+                slug_prefix = helpers.sanitize_filename(page_slug) or "cosplaytele"
+                for index, img_url in enumerate(image_urls, start=1):
+                    parsed_path = urllib.parse.urlparse(img_url).path
+                    filename = os.path.basename(parsed_path) or f"{slug_prefix}_{index:03d}.jpg"
+                    sanitized = helpers.sanitize_filename(filename) or f"{slug_prefix}_{index:03d}.jpg"
+                    target_path = os.path.join(temp_dir, sanitized)
+                    download_jobs.append((img_url, target_path))
+
+                def _download_all() -> list[bool]:
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+                        return list(executor.map(helpers.ct_download_single_image, download_jobs))
+
+                await bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=status_message.message_id,
+                    text="📥 در حال دریافت تصاویر...",
+                )
+                results = await asyncio.to_thread(_download_all)
+
+                for index, ((_, file_path), success) in enumerate(zip(download_jobs, results), start=1):
+                    filename = os.path.basename(file_path)
+                    if not success or not os.path.exists(file_path):
+                        logger.error(f"[{helpers.COSPLAYTELE_DOMAIN}] تصویر {filename} دانلود نشد.")
+                        continue
+
+                    await bot.edit_message_text(
+                        chat_id=chat_id,
+                        message_id=status_message.message_id,
+                        text=f"[{index}/{len(download_jobs)}] 📤 در حال ارسال {filename}...",
+                    )
+                    try:
+                        await bot.send_photo(chat_id=chat_id, photo=FSInputFile(file_path), caption=filename)
+                        total_downloaded_bytes += os.path.getsize(file_path)
+                    except Exception as exc:
+                        logger.error(f"[{helpers.COSPLAYTELE_DOMAIN}] خطا در ارسال {filename}: {exc}")
+
+                await bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=status_message.message_id,
+                    text="✅ ارسال تمام عکس‌ها به پایان رسید.",
+                )
+
+            if total_downloaded_bytes:
+                async with AsyncSessionLocal() as session:
+                    await database.record_download_event(
+                        session,
+                        user_id=user_id,
+                        domain=helpers.COSPLAYTELE_DOMAIN,
+                        bytes_downloaded=total_downloaded_bytes,
+                    )
+
+            await bot.send_message(
+                chat_id=chat_id,
+                text="تسک شما انجام شد ✅",
+                reply_markup=get_task_done_keyboard(),
+            )
+
+        except Exception as exc:
+            logger.error(f"CosplayTele task error: {exc}", exc_info=True)
+            await bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=status_message.message_id,
+                text=f"❌ خطایی در پردازش تصاویر رخ داد: {exc}",
+            )
+        finally:
+            await bot.session.close()
+
+    helpers.run_async_in_sync(_async_worker())
+
+
 @celery_app.task(name="tasks.download_video_task")
 def download_video_task(
     chat_id: int,
