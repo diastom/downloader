@@ -36,6 +36,7 @@ class DownloadFSM(StatesGroup):
     manhwa_awaiting_zip_option = State()
     gallery_awaiting_zip_option = State()
     erome_awaiting_choice = State()
+    cosplaytele_awaiting_choice = State()
 
 # --- Main Link Handler ---
 async def _process_download_link(message: types.Message, state: FSMContext, session: AsyncSession, bot: Bot):
@@ -43,7 +44,13 @@ async def _process_download_link(message: types.Message, state: FSMContext, sess
     user_id = message.from_user.id
     domain = urllib.parse.urlparse(url).netloc.lower().replace('www.', '')
 
-    all_supported_domains = list(MANHWA_DOMAINS) + helpers.GALLERY_DL_SITES + helpers.GALLERY_DL_ZIP_SITES + [helpers.EROME_DOMAIN] + VIDEO_DOMAINS
+    all_supported_domains = (
+        list(MANHWA_DOMAINS)
+        + helpers.GALLERY_DL_SITES
+        + helpers.GALLERY_DL_ZIP_SITES
+        + [helpers.EROME_DOMAIN, helpers.COSPLAYTELE_DOMAIN]
+        + VIDEO_DOMAINS
+    )
     if domain not in all_supported_domains:
         await message.answer("This site is not currently supported for downloads.")
         return
@@ -80,6 +87,8 @@ async def _process_download_link(message: types.Message, state: FSMContext, sess
         await handle_gallery_dl_link(message, state, url)
     elif domain == helpers.EROME_DOMAIN:
         await handle_erome_link(message, state, url)
+    elif domain == helpers.COSPLAYTELE_DOMAIN:
+        await handle_cosplaytele_link(message, state, url)
     elif domain in VIDEO_DOMAINS:
         await handle_yt_dlp_link(message, state, url, session)
     else:
@@ -196,6 +205,61 @@ async def handle_erome_link(message: types.Message, state: FSMContext, url: str)
         if driver:
             driver.quit()
 
+
+async def handle_cosplaytele_link(message: types.Message, state: FSMContext, url: str):
+    status_msg = await message.answer(f"🔎 در حال تحلیل لینک از {helpers.COSPLAYTELE_DOMAIN}...")
+    try:
+        media_urls = await asyncio.to_thread(helpers.ct_analyze_and_extract_media, url)
+        if not media_urls or (
+            not media_urls.get("images") and not media_urls.get("videos")
+        ):
+            await status_msg.edit_text("هیچ عکس یا ویدیویی برای دانلود یافت نشد.")
+            return
+
+        num_images = len(media_urls.get("images", []))
+        num_videos = len(media_urls.get("videos", []))
+
+        keyboard_buttons: list[list[types.InlineKeyboardButton]] = []
+        if num_images:
+            keyboard_buttons.append(
+                [
+                    types.InlineKeyboardButton(
+                        text=f"🖼️ دانلود {num_images} عکس", callback_data="ct_choice_images"
+                    )
+                ]
+            )
+        if num_videos:
+            keyboard_buttons.append(
+                [
+                    types.InlineKeyboardButton(
+                        text=f"🎬 دانلود {num_videos} ویدیو", callback_data="ct_choice_videos"
+                    )
+                ]
+            )
+
+        if not keyboard_buttons:
+            await status_msg.edit_text("محتوای قابل دانلودی در این صفحه وجود ندارد.")
+            return
+
+        page_slug = urllib.parse.urlparse(url).path.strip("/").replace("/", "-") or "cosplaytele-gallery"
+
+        await state.set_state(DownloadFSM.cosplaytele_awaiting_choice)
+        await state.update_data(ct_media=media_urls, ct_page_slug=page_slug)
+
+        await status_msg.edit_text(
+            (
+                "✅ تحلیل کامل شد.\n"
+                f"- {num_images} عکس\n"
+                f"- {num_videos} ویدیو\n\n"
+                "کدام یک را مایل به دانلود هستید؟"
+            ),
+            reply_markup=types.InlineKeyboardMarkup(inline_keyboard=keyboard_buttons),
+        )
+    except Exception as exc:
+        logger.error(f"Error handling CosplayTele link {url}: {exc}", exc_info=True)
+        await status_msg.edit_text(f"خطایی رخ داد: {exc}")
+
+
 async def handle_gallery_dl_link(message: types.Message, state: FSMContext, url: str):
     user_id = message.from_user.id
     await state.set_state(DownloadFSM.gallery_awaiting_zip_option)
@@ -257,6 +321,77 @@ async def handle_erome_choice(query: types.CallbackQuery, state: FSMContext, ses
         media_urls=media,
         choice=choice
     )
+    await state.clear()
+
+
+@router.callback_query(DownloadFSM.cosplaytele_awaiting_choice, F.data.startswith("ct_choice_"))
+async def handle_cosplaytele_choice(query: types.CallbackQuery, state: FSMContext, session: AsyncSession):
+    await query.answer()
+    choice = query.data.replace("ct_choice_", "")
+    data = await state.get_data()
+
+    media_urls: dict = data.get("ct_media", {})
+    page_slug: str = data.get("ct_page_slug", "cosplaytele-gallery")
+
+    if not media_urls:
+        await query.message.edit_text("اطلاعات دانلود منقضی شده است. لطفاً دوباره تلاش کنید.")
+        await state.clear()
+        return
+
+    if choice == "images":
+        image_urls = media_urls.get("images", [])
+        if not image_urls:
+            await query.message.edit_text("هیچ عکسی برای دانلود در این صفحه وجود ندارد.")
+            await state.clear()
+            return
+
+        allowed, error_message = await _reserve_task_slot(session, query.from_user.id)
+        if not allowed:
+            await query.message.edit_text(error_message)
+            await state.clear()
+            return
+
+        download_tasks.process_cosplaytele_images_task.delay(
+            chat_id=query.message.chat.id,
+            user_id=query.from_user.id,
+            image_urls=image_urls,
+            page_slug=page_slug,
+        )
+        await query.message.edit_text(
+            f"✅ درخواست دانلود {len(image_urls)} عکس به صف اضافه شد."
+        )
+
+    elif choice == "videos":
+        video_urls = media_urls.get("videos", [])
+        if not video_urls:
+            await query.message.edit_text("هیچ ویدیویی برای دانلود در این صفحه وجود ندارد.")
+            await state.clear()
+            return
+
+        allowed, error_message = await _reserve_task_slot(session, query.from_user.id)
+        if not allowed:
+            await query.message.edit_text(error_message)
+            await state.clear()
+            return
+
+        for video_url in video_urls:
+            source_domain = urllib.parse.urlparse(video_url).netloc.lower().replace("www.", "") or helpers.COSPLAYTELE_DOMAIN
+            download_tasks.download_video_task.delay(
+                chat_id=query.message.chat.id,
+                url=video_url,
+                selected_format="best",
+                video_info_json="{}",
+                user_id=query.from_user.id,
+                send_completion_message=False,
+                source_domain=source_domain,
+            )
+
+        await query.message.edit_text(
+            f"✅ درخواست دانلود {len(video_urls)} ویدیو به صف اضافه شد."
+        )
+    else:
+        await query.message.edit_text("گزینه انتخاب‌شده نامعتبر است.")
+
     await state.clear()
 
 

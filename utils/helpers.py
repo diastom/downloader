@@ -68,6 +68,13 @@ ALL_SUPPORTED_SITES = {
 
 COOKIES_FILE_PATH = "pornhub_cookies.txt"
 
+CT_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    )
+}
+
 # --- General Helpers ---
 
 def sanitize_filename(name: str) -> str:
@@ -360,11 +367,71 @@ def md_get_chapter_image_urls(chapter_url: str) -> List[str]:
 
 # CosplayTele.com
 def ct_analyze_and_extract_media(page_url: str) -> Dict[str, List[str]]:
-    res = requests.get(page_url, headers={'User-Agent': 'Mozilla/5.0'})
-    soup = BeautifulSoup(res.text, 'html.parser')
-    images = [urljoin(page_url, a['href']) for a in soup.select('div.gallery a[href*=".jpg"]')]
-    videos = [iframe['src'] for iframe in soup.select('iframe[src*="aparat.com"]')]
-    return {'images': images, 'videos': videos}
+    """Parse a CosplayTele gallery page and extract downloadable media URLs."""
+    logger.info(f"[{COSPLAYTELE_DOMAIN}] Analysing page: {page_url}")
+    media_urls: Dict[str, List[str]] = {"images": [], "videos": []}
+    try:
+        response = requests.get(page_url, headers=CT_HEADERS, timeout=20)
+        response.raise_for_status()
+
+        soup = BeautifulSoup(response.text, "html.parser")
+
+        gallery = soup.find("div", class_="gallery")
+        if gallery:
+            image_links = gallery.find_all(
+                "a", href=re.compile(r"\.(jpg|jpeg|png|gif|webp)$", re.IGNORECASE)
+            )
+            for link in image_links:
+                media_urls["images"].append(urljoin(page_url, link["href"]))
+
+        iframe_sources = soup.find_all(
+            "iframe", src=re.compile(r"aparat\.com|youtube\.com|cossora\.stream", re.IGNORECASE)
+        )
+        for iframe in iframe_sources:
+            src = iframe.get("src")
+            if src:
+                media_urls["videos"].append(src)
+
+        for video_tag in soup.find_all("video"):
+            src = video_tag.get("src")
+            if not src:
+                source_tag = video_tag.find("source")
+                if source_tag:
+                    src = source_tag.get("src")
+            if src:
+                media_urls["videos"].append(urljoin(page_url, src))
+
+        media_urls["images"] = sorted(list(dict.fromkeys(media_urls["images"])))
+        media_urls["videos"] = sorted(list(dict.fromkeys(media_urls["videos"])))
+
+        logger.info(
+            f"[{COSPLAYTELE_DOMAIN}] Found {len(media_urls['images'])} images and "
+            f"{len(media_urls['videos'])} videos."
+        )
+        return media_urls
+
+    except requests.exceptions.RequestException as exc:
+        logger.error(f"[{COSPLAYTELE_DOMAIN}] Failed to fetch page: {exc}")
+        return {}
+    except Exception as exc:  # pragma: no cover - defensive programming
+        logger.error(f"[{COSPLAYTELE_DOMAIN}] Unexpected error while parsing page: {exc}")
+        return {}
+
+
+def ct_download_single_image(args: Tuple[str, str]) -> bool:
+    """Download a single CosplayTele image to the given file path."""
+    img_url, file_path = args
+    try:
+        response = requests.get(img_url, headers=CT_HEADERS, stream=True, timeout=30)
+        response.raise_for_status()
+        with open(file_path, "wb") as file:
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    file.write(chunk)
+        return True
+    except requests.exceptions.RequestException as exc:
+        logger.error(f"[{COSPLAYTELE_DOMAIN}] Failed to download image {img_url}: {exc}")
+        return False
 
 # Comick.fun
 def cm_get_info_and_chapters(comic_url: str, driver) -> Tuple[str, List[Dict]]:
