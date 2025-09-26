@@ -111,6 +111,10 @@ async def check_subscription(session: AsyncSession, user_id: int, domain: str) -
     if not user.sub_allowed_sites.get(domain, False):
         return False, f"Your subscription does not include access to {domain}."
 
+    can_start, limit, used_today = await database.can_user_start_task(session, user_id)
+    if not can_start:
+        return False, database.format_task_limit_message(limit, used_today)
+
     return True, "Access granted."
 
 

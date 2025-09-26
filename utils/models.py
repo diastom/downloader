@@ -50,6 +50,12 @@ class User(Base):
         cascade="all, delete-orphan",
         order_by="DownloadRecord.id",
     )
+    task_usage = relationship(
+        "TaskUsage",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        order_by="TaskUsage.id",
+    )
 
 
 class Thumbnail(Base):
@@ -122,3 +128,15 @@ class DownloadRecord(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
     user = relationship("User", back_populates="download_records")
+
+
+class TaskUsage(Base):
+    __tablename__ = "task_usage"
+    __table_args__ = {"schema": "public"}
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(BigInteger, ForeignKey("public.users.id"), nullable=False, index=True)
+    task_type = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    user = relationship("User", back_populates="task_usage")

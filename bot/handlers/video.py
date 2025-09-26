@@ -213,6 +213,13 @@ async def handle_start_button(query: types.CallbackQuery, state: FSMContext, ses
         await query.answer("خطا: شما اعمال واترمارک را انتخاب کرده‌اید اما واترمارک شما غیرفعال است. لطفاً با /water آن را فعال کنید و دوباره امتحان کنید.", show_alert=True)
         return
 
+    can_start, limit, used_today = await database.can_user_start_task(session, user_id)
+    if not can_start:
+        await query.answer(database.format_task_limit_message(limit, used_today), show_alert=True)
+        return
+
+    await database.record_task_usage(session, user_id, "encode")
+
     await query.message.edit_text("✅ درخواست شما به صف انکد اضافه شد...")
     video_tasks.encode_video_task.delay(
         user_id=user_id,
