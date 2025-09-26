@@ -1,7 +1,12 @@
+import asyncio
 import logging
 import os
+from pathlib import Path
+
 from aiogram import Bot
-from aiogram.types import FSInputFile, URLInputFile
+from aiogram.types import FSInputFile
+
+from utils import video_processor
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +41,17 @@ async def upload_video(
     logger.info(f"[BotAPI] Preparing to upload video to chat {target_chat_id}: {file_path}")
     try:
         video_file = FSInputFile(file_path)
-        thumb_file = FSInputFile(thumb_path) if thumb_path and os.path.exists(thumb_path) else None
+        thumb_file = None
+
+        if thumb_path and os.path.exists(thumb_path):
+            prepared = await asyncio.to_thread(
+                video_processor.prepare_thumbnail_image,
+                Path(thumb_path),
+            )
+            if prepared:
+                thumb_file = FSInputFile(thumb_path)
+            else:
+                logger.warning("Thumbnail %s could not be prepared within Telegram limits.", thumb_path)
 
         message = await bot.send_video(
             chat_id=target_chat_id,
