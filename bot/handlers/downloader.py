@@ -109,9 +109,9 @@ async def auto_start_download(message: types.Message, state: FSMContext, session
 
 
 async def _reserve_task_slot(session: AsyncSession, user_id: int, task_type: str = "download") -> tuple[bool, str | None]:
-    allowed, limit, used_today = await database.can_user_start_task(session, user_id)
+    allowed, limit, used_today = await database.can_user_start_task(session, user_id, task_type=task_type)
     if not allowed:
-        return False, database.format_task_limit_message(limit, used_today)
+        return False, database.format_task_limit_message(task_type, limit, used_today)
 
     await database.record_task_usage(session, user_id, task_type)
     return True, None

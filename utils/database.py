@@ -40,6 +40,7 @@ async def get_or_create_user(session: AsyncSession, user_id: int, username: str 
             sub_is_active=False,
             sub_download_limit=-1,
             sub_allowed_sites=default_allowed_sites,
+            sub_encode_limit=-1,
             stats_site_usage={},
         )
         session.add(user)
@@ -56,13 +57,26 @@ async def get_or_create_user(session: AsyncSession, user_id: int, username: str 
         result = await session.execute(stmt)
         user = result.scalar_one()
 
+    updated = False
+
     if username and user.username != username:
         user.username = username
+        updated = True
+
+    if getattr(user, "sub_encode_limit", None) is None:
+        user.sub_encode_limit = -1
+        updated = True
+
+    if updated:
         await session.commit()
 
     return user
 
-async def get_user_daily_task_count(session: AsyncSession, user_id: int) -> int:
+async def get_user_daily_task_count(
+    session: AsyncSession,
+    user_id: int,
+    task_type: str | None = None,
+) -> int:
     """Returns the number of tasks the user has started today."""
     now = datetime.utcnow()
     today_start = datetime(now.year, now.month, now.day)
@@ -73,22 +87,32 @@ async def get_user_daily_task_count(session: AsyncSession, user_id: int) -> int:
             models.TaskUsage.created_at >= today_start,
         )
     )
+    if task_type:
+        stmt = stmt.where(models.TaskUsage.task_type == task_type)
     result = await session.execute(stmt)
     return result.scalar_one_or_none() or 0
 
 
-async def can_user_start_task(session: AsyncSession, user_id: int, tasks_needed: int = 1) -> tuple[bool, int, int]:
+async def can_user_start_task(
+    session: AsyncSession,
+    user_id: int,
+    task_type: str = "download",
+    tasks_needed: int = 1,
+) -> tuple[bool, int, int]:
     """
     Checks whether the user still has daily task quota remaining.
 
     Returns a tuple of (allowed, limit, used_today).
     """
     user = await get_or_create_user(session, user_id)
-    limit = user.sub_download_limit or 0
+    limit_attr = "sub_encode_limit" if task_type == "encode" else "sub_download_limit"
+    user_limit_value = getattr(user, limit_attr, 0)
+    tasks_today = await get_user_daily_task_count(session, user_id, task_type)
 
-    tasks_today = await get_user_daily_task_count(session, user_id)
-    if user.sub_download_limit == -1:
+    if user_limit_value == -1:
         return True, -1, tasks_today
+
+    limit = user_limit_value or 0
 
     return tasks_today + tasks_needed <= limit, limit, tasks_today
 
@@ -114,12 +138,17 @@ async def record_task_usage(
     return usage
 
 
-def format_task_limit_message(limit: int, used_today: int) -> str:
+def format_task_limit_message(task_type: str, limit: int, used_today: int) -> str:
     """Returns a localized message explaining the daily task limit."""
+    task_label = {
+        "encode": "انکد",
+        "download": "دانلود",
+    }.get(task_type, task_type)
+
     return (
-        "سقف استفاده روزانه شما به پایان رسیده است.\n"
-        f"حداکثر تسک مجاز در روز: {limit}\n"
-        f"تسک‌های انجام‌شده امروز: {used_today}\n"
+        f"سقف استفاده روزانه شما برای {task_label} به پایان رسیده است.\n"
+        f"حداکثر تسک {task_label} در روز: {limit}\n"
+        f"تسک‌های {task_label} انجام‌شده امروز: {used_today}\n"
         "لطفاً فردا دوباره تلاش کنید."
     )
 

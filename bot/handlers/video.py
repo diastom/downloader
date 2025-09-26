@@ -269,9 +269,9 @@ async def handle_start_button(query: types.CallbackQuery, state: FSMContext, ses
             await query.answer("واترمارک انتخاب‌شده غیرفعال است. لطفاً از /water آن را فعال کنید.", show_alert=True)
             return
 
-    can_start, limit, used_today = await database.can_user_start_task(session, user_id)
+    can_start, limit, used_today = await database.can_user_start_task(session, user_id, task_type="encode")
     if not can_start:
-        await query.answer(database.format_task_limit_message(limit, used_today), show_alert=True)
+        await query.answer(database.format_task_limit_message("encode", limit, used_today), show_alert=True)
         return
 
     await database.record_task_usage(session, user_id, "encode")

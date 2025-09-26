@@ -29,6 +29,7 @@ class User(Base):
     sub_is_active = Column(Boolean, default=False)
     sub_expiry_date = Column(DateTime, nullable=True)
     sub_download_limit = Column(Integer, default=-1)
+    sub_encode_limit = Column(Integer, default=-1)
     sub_allowed_sites = Column(JSONB)
 
     allow_thumbnail = Column(Boolean, default=True, nullable=False)
