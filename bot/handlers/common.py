@@ -3,7 +3,6 @@ from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
-    InlineKeyboardMarkup, InlineKeyboardButton,
     ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 )
 
@@ -19,11 +18,8 @@ class UserFlow(StatesGroup):
     encoding = State()
 
 def get_main_menu_keyboard():
-    """Returns the quick action inline keyboard for post-task prompts."""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📥 ارسال لینک جدید", callback_data="start_download")],
-        [InlineKeyboardButton(text="🎬 ارسال ویدیوی جدید", callback_data="start_encode")]
-    ])
+    """Legacy helper retained for compatibility; no inline keyboard is returned."""
+    return None
 
 def get_main_reply_keyboard():
     """Returns the main persistent reply keyboard."""
@@ -33,11 +29,8 @@ def get_main_reply_keyboard():
     )
 
 def get_task_done_keyboard():
-    """Returns the keyboard for the task done message."""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📥 ارسال لینک جدید", callback_data="start_download")],
-        [InlineKeyboardButton(text="🎬 ارسال ویدیوی جدید", callback_data="start_encode")]
-    ])
+    """Legacy helper kept for compatibility; no keyboard is attached now."""
+    return None
 
 @router.message(CommandStart())
 async def handle_start(message: types.Message, state: FSMContext, session: AsyncSession):
