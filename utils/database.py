@@ -22,7 +22,7 @@ async def get_or_create_user(session: AsyncSession, user_id: int, username: str 
         select(models.User)
         .where(models.User.id == user_id)
         .options(
-            selectinload(models.User.watermark),
+            selectinload(models.User.watermarks),
             selectinload(models.User.thumbnails)
         )
     )
@@ -44,7 +44,11 @@ async def get_or_create_user(session: AsyncSession, user_id: int, username: str 
         )
         session.add(user)
 
-        watermark = models.WatermarkSetting(user=user, text=f"@{settings.bot_token.split(':')[0]}")
+        watermark = models.WatermarkSetting(
+            user=user,
+            text=f"@{settings.bot_token.split(':')[0]}",
+            display_name="پیش‌فرض",
+        )
         session.add(watermark)
 
         await session.commit()
@@ -151,14 +155,19 @@ async def get_user_thumbnails(session: AsyncSession, user_id: int) -> list[model
     return list(result.scalars().all())
 
 
-async def set_user_thumbnail(session: AsyncSession, user_id: int, file_id: str) -> models.Thumbnail:
-    """Adds a new thumbnail for the user. Keeps compatibility with previous name."""
+async def set_user_thumbnail(
+    session: AsyncSession,
+    user_id: int,
+    file_id: str,
+    display_name: str | None = None,
+) -> models.Thumbnail:
+    """Adds a new thumbnail for the user with an optional display name."""
     user = await get_or_create_user(session, user_id)
     existing = list(user.thumbnails)
-    if len(existing) >= 10:
+    if len(existing) >= 50:
         raise ValueError("Maximum number of thumbnails reached")
 
-    new_thumbnail = models.Thumbnail(user_id=user_id, file_id=file_id)
+    new_thumbnail = models.Thumbnail(user_id=user_id, file_id=file_id, display_name=display_name)
     session.add(new_thumbnail)
     await session.commit()
     await session.refresh(new_thumbnail)
@@ -203,21 +212,82 @@ async def get_user_thumbnail_by_id(session: AsyncSession, user_id: int, thumbnai
 
 
 # --- Watermark ---
-async def get_user_watermark_settings(session: AsyncSession, user_id: int) -> models.WatermarkSetting:
-    user = await get_or_create_user(session, user_id)
-    if user.watermark is None:
-        watermark = models.WatermarkSetting(user_id=user_id, text=f"@{settings.bot_token.split(':')[0]}")
-        session.add(watermark)
-        await session.commit()
-        await session.refresh(user, ['watermark'])
-    return user.watermark
+async def get_user_watermarks(session: AsyncSession, user_id: int) -> list[models.WatermarkSetting]:
+    """Returns all watermark profiles for the user, creating a default one if missing."""
+    await get_or_create_user(session, user_id)
+    stmt = (
+        select(models.WatermarkSetting)
+        .where(models.WatermarkSetting.user_id == user_id)
+        .order_by(models.WatermarkSetting.id)
+    )
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
 
-async def update_user_watermark_settings(session: AsyncSession, user_id: int, new_settings: dict):
-    watermark = await get_user_watermark_settings(session, user_id)
-    for key, value in new_settings.items():
+
+async def get_user_watermark_by_id(
+    session: AsyncSession,
+    user_id: int,
+    watermark_id: int,
+) -> models.WatermarkSetting | None:
+    stmt = (
+        select(models.WatermarkSetting)
+        .where(
+            models.WatermarkSetting.user_id == user_id,
+            models.WatermarkSetting.id == watermark_id,
+        )
+    )
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+async def create_user_watermark(
+    session: AsyncSession,
+    user_id: int,
+    text: str,
+    display_name: str | None = None,
+) -> models.WatermarkSetting:
+    watermarks = await get_user_watermarks(session, user_id)
+    if len(watermarks) >= 50:
+        raise ValueError("Maximum number of watermarks reached")
+
+    watermark = models.WatermarkSetting(
+        user_id=user_id,
+        text=text or f"@{settings.bot_token.split(':')[0]}",
+        display_name=display_name,
+    )
+    session.add(watermark)
+    await session.commit()
+    await session.refresh(watermark)
+    return watermark
+
+
+async def update_user_watermark(
+    session: AsyncSession,
+    user_id: int,
+    watermark_id: int,
+    updates: dict,
+) -> models.WatermarkSetting | None:
+    watermark = await get_user_watermark_by_id(session, user_id, watermark_id)
+    if not watermark:
+        return None
+
+    for key, value in updates.items():
         if hasattr(watermark, key):
             setattr(watermark, key, value)
+
     await session.commit()
+    await session.refresh(watermark)
+    return watermark
+
+
+async def delete_user_watermark(session: AsyncSession, user_id: int, watermark_id: int) -> bool:
+    watermark = await get_user_watermark_by_id(session, user_id, watermark_id)
+    if not watermark:
+        return False
+
+    await session.delete(watermark)
+    await session.commit()
+    return True
 
 
 # --- Bot Texts ---

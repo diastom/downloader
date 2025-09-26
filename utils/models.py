@@ -43,7 +43,12 @@ class User(Base):
         cascade="all, delete-orphan",
         order_by="Thumbnail.id",
     )
-    watermark = relationship("WatermarkSetting", back_populates="user", uselist=False)
+    watermarks = relationship(
+        "WatermarkSetting",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        order_by="WatermarkSetting.id",
+    )
     download_records = relationship(
         "DownloadRecord",
         back_populates="user",
@@ -65,6 +70,7 @@ class Thumbnail(Base):
     id = Column(Integer, primary_key=True)
     user_id = Column(BigInteger, ForeignKey('public.users.id'), nullable=False)
     file_id = Column(String, nullable=False)
+    display_name = Column(String, nullable=True)
     user = relationship("User", back_populates="thumbnails")
 
 
@@ -73,14 +79,15 @@ class WatermarkSetting(Base):
     __table_args__ = {"schema": "public"}
 
     id = Column(Integer, primary_key=True)
-    user_id = Column(BigInteger, ForeignKey("public.users.id"), unique=True, nullable=False)
-    enabled = Column(Boolean, default=False)
+    user_id = Column(BigInteger, ForeignKey("public.users.id"), nullable=False, index=True)
+    display_name = Column(String, nullable=True)
+    enabled = Column(Boolean, default=True)
     text = Column(String, default="@YourBot")
     position = Column(String, default="top_left")
     size = Column(Integer, default=32)
     color = Column(String, default="white")
     stroke = Column(Integer, default=2)
-    user = relationship("User", back_populates="watermark")
+    user = relationship("User", back_populates="watermarks")
 
 
 class UrlCache(Base):

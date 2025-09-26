@@ -54,9 +54,11 @@ def encode_video_task(user_id: int, username: str, chat_id: int, video_file_id: 
                 else:
                     await bot.edit_message_text(f"⚠️ اخطار: تغییر کیفیت انجام نشد، از کیفیت اصلی استفاده می‌شود.", chat_id=chat_id, message_id=status_message.message_id)
 
-            if options.get("water"):
+            if options.get("water") and options.get("watermark_id"):
                 async with AsyncSessionLocal() as session:
-                    watermark_settings = await database.get_user_watermark_settings(session, user_id)
+                    watermark_settings = await database.get_user_watermark_by_id(
+                        session, user_id, options["watermark_id"]
+                    )
                 if watermark_settings and watermark_settings.enabled:
                     await bot.edit_message_text("💧 در حال اعمال واترمارک...", chat_id=chat_id, message_id=status_message.message_id)
                     watermarked_path = task_dir / f"watermarked_{final_filename}"
