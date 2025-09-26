@@ -49,10 +49,18 @@ async def get_subscription_panel(session: AsyncSession, target_user_id: int) -> 
         delta = expiry_date - datetime.now()
         remain_days = max(0, delta.days)
 
-    limit = user.sub_download_limit
-    limit_text = "Unlimited" if limit == -1 else str(limit)
+    download_limit = user.sub_download_limit
+    download_limit_text = "Unlimited" if download_limit == -1 else str(download_limit)
+    encode_limit = user.sub_encode_limit
+    encode_limit_text = "Unlimited" if encode_limit == -1 else str(encode_limit)
 
-    info_text = f"👤 @{user.username or 'N/A'}\nUID: `{user.id}`\nDays Left: **{remain_days}**\nLimit: **{limit_text}**/day"
+    info_text = (
+        f"👤 @{user.username or 'N/A'}\n"
+        f"UID: `{user.id}`\n"
+        f"Days Left: **{remain_days}**\n"
+        f"Download Limit: **{download_limit_text}**/day\n"
+        f"Encode Limit: **{encode_limit_text}**/day"
+    )
 
     # --- Feature Toggles ---
     thumb_status = "✅" if user.allow_thumbnail else "❌"
@@ -85,10 +93,13 @@ async def get_subscription_panel(session: AsyncSession, target_user_id: int) -> 
         [InlineKeyboardButton(text="-10d", callback_data="sub_add_days_-10"),
          InlineKeyboardButton(text="+10d", callback_data="sub_add_days_10"),
          InlineKeyboardButton(text="+30d", callback_data="sub_add_days_30")],
-        [InlineKeyboardButton(text="Limit: -10", callback_data="sub_add_limit_-10"),
-         InlineKeyboardButton(text="Limit: +10", callback_data="sub_add_limit_10"),
-         InlineKeyboardButton(text="Limit: No Limit", callback_data="sub_add_limit_0")],
-        [InlineKeyboardButton(text="🔙 Back to Admin Panel", callback_data="sub_back_to_panel")] 
+        [InlineKeyboardButton(text="DL Limit: -10", callback_data="sub_add_download_limit_-10"),
+         InlineKeyboardButton(text="DL No Limit", callback_data="sub_add_download_limit_0"),
+         InlineKeyboardButton(text="DL Limit: +10", callback_data="sub_add_download_limit_10")],
+        [InlineKeyboardButton(text="ENC Limit: -10", callback_data="sub_add_encode_limit_-10"),
+         InlineKeyboardButton(text="ENC No Limit", callback_data="sub_add_encode_limit_0"),
+         InlineKeyboardButton(text="ENC Limit: +10", callback_data="sub_add_encode_limit_10")],
+        [InlineKeyboardButton(text="🔙 Back to Admin Panel", callback_data="sub_back_to_panel")]
     ])
 
     return info_text, InlineKeyboardMarkup(inline_keyboard=keyboard)
@@ -202,8 +213,8 @@ async def handle_sub_management_callback(query: CallbackQuery, state: FSMContext
             base_time = datetime.now()
         user.sub_expiry_date = base_time + timedelta(days=days)
         await query.answer(f"{abs(days)} days {'added' if days > 0 else 'removed'}.")
-    elif action.startswith("add_limit_"):
-        limit_action = action.replace("add_limit_", "")
+    elif action.startswith("add_download_limit_"):
+        limit_action = action.replace("add_download_limit_", "")
         if limit_action == "0":
             user.sub_download_limit = -1
         else:
@@ -211,6 +222,15 @@ async def handle_sub_management_callback(query: CallbackQuery, state: FSMContext
             current_limit = 0 if user.sub_download_limit == -1 else user.sub_download_limit
             user.sub_download_limit = max(0, current_limit + limit_change)
         await query.answer("Download limit changed.")
+    elif action.startswith("add_encode_limit_"):
+        limit_action = action.replace("add_encode_limit_", "")
+        if limit_action == "0":
+            user.sub_encode_limit = -1
+        else:
+            limit_change = int(limit_action)
+            current_limit = 0 if user.sub_encode_limit == -1 else user.sub_encode_limit
+            user.sub_encode_limit = max(0, current_limit + limit_change)
+        await query.answer("Encode limit changed.")
     
     await session.commit()
     info_text, keyboard = await get_subscription_panel(session, target_user_id)

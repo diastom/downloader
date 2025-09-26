@@ -3,6 +3,8 @@ import logging
 import sys
 
 from bot.core import setup_dispatcher
+from sqlalchemy import text
+
 from utils.bot_instance import create_bot_instance
 from utils.helpers import check_dependencies
 from utils.db_session import engine
@@ -14,6 +16,18 @@ async def init_database():
     """
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.execute(text(
+            "ALTER TABLE IF EXISTS public.users "
+            "ADD COLUMN IF NOT EXISTS sub_encode_limit INTEGER DEFAULT -1"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE public.users "
+            "ALTER COLUMN sub_encode_limit SET DEFAULT -1"
+        ))
+        await conn.execute(text(
+            "UPDATE public.users SET sub_encode_limit = -1 "
+            "WHERE sub_encode_limit IS NULL"
+        ))
     logging.getLogger(__name__).info("Database tables checked/created successfully.")
 
 async def main():
