@@ -5,6 +5,7 @@ from typing import Iterable
 from aiogram import Bot, F, Router, types
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery
+from requests import HTTPError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from utils import database
@@ -12,7 +13,7 @@ from utils.db_session import AsyncSessionLocal
 from utils.payments import (
     create_nowpayments_invoice,
     get_live_price,
-    get_nowpayments_invoice_status,
+    get_nowpayments_payment_status,
 )
 
 logger = logging.getLogger(__name__)
@@ -22,8 +23,8 @@ router = Router()
 PAYMENT_CURRENCY = "trx"
 STATUS_SUCCESS = {"finished", "confirmed", "completed", "paid"}
 STATUS_FAILED = {"failed", "expired", "refunded", "partially_refunded"}
-CHECK_INTERVAL_SECONDS = 20
-MAX_STATUS_CHECKS = 45  # ~15 minutes
+CHECK_DELAY_SECONDS = 45
+invoices_to_check: list[dict[str, object]] = []
 
 
 def _format_plan_description(plan, *, crypto_amount: float) -> str:
@@ -75,66 +76,81 @@ async def show_buy_menu(message: types.Message, session: AsyncSession):
     await message.answer(text, reply_markup=keyboard)
 
 
-async def _poll_invoice_status(*, bot: Bot, invoice_id: str, user_id: int, plan_id: int, api_key: str) -> None:
-    attempts = 0
-    while attempts < MAX_STATUS_CHECKS:
-        await asyncio.sleep(CHECK_INTERVAL_SECONDS)
-        attempts += 1
+async def _check_invoice_status_once(
+    *, bot: Bot, invoice_id: str, user_id: int, plan_id: int, api_key: str
+) -> None:
+    try:
+        invoice_info = await get_nowpayments_payment_status(api_key=api_key, payment_id=invoice_id)
+    except HTTPError as exc:
+        if exc.response is not None and exc.response.status_code == 404:
+            logger.debug("Payment %s not yet available for status polling", invoice_id)
+            return
+        logger.warning("Failed to fetch payment status for %s: %s", invoice_id, exc)
+        return
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to fetch payment status for %s: %s", invoice_id, exc)
+        return
 
-        try:
-            invoice_info = await get_nowpayments_invoice_status(api_key=api_key, invoice_id=invoice_id)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Failed to fetch invoice status for %s: %s", invoice_id, exc)
-            continue
+    status = (
+        invoice_info.get("status")
+        or invoice_info.get("invoice_status")
+        or invoice_info.get("payment_status")
+    )
+    if not status:
+        return
 
-        status = (
-            invoice_info.get("status")
-            or invoice_info.get("invoice_status")
-            or invoice_info.get("payment_status")
-        )
-        if not status:
-            continue
-
-        async with AsyncSessionLocal() as new_session:
-            await database.update_payment_transaction_status(
-                new_session,
-                payment_id=invoice_id,
-                status=status,
-            )
-
-            if status.lower() in STATUS_SUCCESS:
-                plan = await database.get_subscription_plan(new_session, plan_id)
-                if not plan:
-                    await bot.send_message(user_id, "پلن خریداری‌شده دیگر وجود ندارد. لطفاً با پشتیبانی تماس بگیرید.")
-                    return
-
-                user = await database.apply_subscription_plan(new_session, user_id=user_id, plan=plan)
-                await bot.send_message(
-                    user_id,
-                    (
-                        "پرداخت شما با موفقیت تأیید شد.\n"
-                        f"اشتراک شما تا تاریخ {user.sub_expiry_date:%Y-%m-%d} فعال شد."
-                    ),
-                )
-                return
-
-            if status.lower() in STATUS_FAILED:
-                await bot.send_message(
-                    user_id,
-                    "پرداخت ناموفق بود یا منقضی شده است. در صورت کسر وجه، با پشتیبانی تماس بگیرید.",
-                )
-                return
-
-    # Timed out
     async with AsyncSessionLocal() as new_session:
         await database.update_payment_transaction_status(
             new_session,
             payment_id=invoice_id,
-            status="timeout",
+            status=status,
         )
-    await bot.send_message(
-        user_id,
-        "وضعیت پرداخت طی زمان مقرر مشخص نشد. لطفاً در صورت انجام پرداخت با پشتیبانی تماس بگیرید.",
+
+        if status.lower() in STATUS_SUCCESS:
+            plan = await database.get_subscription_plan(new_session, plan_id)
+            if not plan:
+                await bot.send_message(
+                    user_id,
+                    "پلن خریداری‌شده دیگر وجود ندارد. لطفاً با پشتیبانی تماس بگیرید.",
+                )
+                return
+
+            user = await database.apply_subscription_plan(new_session, user_id=user_id, plan=plan)
+            await bot.send_message(
+                user_id,
+                (
+                    "پرداخت شما با موفقیت تأیید شد.\n"
+                    "اشتراک شما فعال شد.\n"
+                    f"تاریخ انقضا: {user.sub_expiry_date:%Y-%m-%d}"
+                ),
+            )
+            return
+
+        if status.lower() in STATUS_FAILED:
+            await bot.send_message(
+                user_id,
+                "پرداخت ناموفق بود یا منقضی شده است. در صورت کسر وجه، با پشتیبانی تماس بگیرید.",
+            )
+
+
+async def _delayed_invoice_check(
+    *, bot: Bot, invoice_id: str, user_id: int, plan_id: int, api_key: str
+) -> None:
+    await asyncio.sleep(CHECK_DELAY_SECONDS)
+
+    for index, invoice in enumerate(list(invoices_to_check)):
+        if invoice["invoice_id"] == invoice_id:
+            invoices_to_check.pop(index)
+            break
+    else:
+        return
+
+    await _check_invoice_status_once(
+        bot=bot,
+        invoice_id=invoice_id,
+        user_id=user_id,
+        plan_id=plan_id,
+        api_key=api_key,
     )
 
 
@@ -210,8 +226,17 @@ async def handle_plan_purchase(query: CallbackQuery, session: AsyncSession):
     )
     await query.message.answer(text)
 
+    invoices_to_check.append(
+        {
+            "invoice_id": invoice_id,
+            "user_id": query.from_user.id,
+            "plan_id": plan.id,
+            "api_key": api_key,
+        }
+    )
+
     asyncio.create_task(
-        _poll_invoice_status(
+        _delayed_invoice_check(
             bot=query.message.bot,
             invoice_id=invoice_id,
             user_id=query.from_user.id,
