@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 BITPIN_MARKETS_URL = "https://api.bitpin.ir/v1/mkt/markets/"
 NOBITEX_STATS_URL = "https://api.nobitex.ir/market/stats"
 NOWPAYMENTS_API_ROOT = "https://api-sandbox.nowpayments.io/v1"
-NOWPAYMENTS_CREATE_INVOICE_URL = f"{NOWPAYMENTS_API_ROOT}/invoice-payment"
+NOWPAYMENTS_CREATE_INVOICE_URL = f"{NOWPAYMENTS_API_ROOT}/invoice"
 NOWPAYMENTS_INVOICE_STATUS_URL = f"{NOWPAYMENTS_API_ROOT}/invoice"
 
 
