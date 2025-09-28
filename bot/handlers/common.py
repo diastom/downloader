@@ -3,11 +3,16 @@ from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
-    ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+    ReplyKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardRemove,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
 )
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from utils import database
+from utils import database, payments
+from decimal import Decimal
 
 router = Router()
 
@@ -16,6 +21,12 @@ class UserFlow(StatesGroup):
     main_menu = State()
     downloading = State()
     encoding = State()
+
+
+class PurchaseFlow(StatesGroup):
+    select_plan = State()
+    select_currency = State()
+    await_link = State()
 
 def get_main_menu_keyboard():
     """Legacy helper retained for compatibility; no inline keyboard is returned."""
@@ -31,6 +42,17 @@ def get_main_reply_keyboard():
 def get_task_done_keyboard():
     """Legacy helper kept for compatibility; no keyboard is attached now."""
     return None
+
+
+def _format_limit(limit: int) -> str:
+    return "نامحدود" if limit is None or limit < 0 else str(limit)
+
+
+def _format_decimal(amount: Decimal) -> str:
+    text = format(amount, "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text
 
 @router.message(CommandStart())
 async def handle_start(message: types.Message, state: FSMContext, session: AsyncSession):
@@ -75,6 +97,229 @@ async def handle_help(message: types.Message, session: AsyncSession):
     help_text = await database.get_text(session, key="help_text", default="متن راهنما هنوز تنظیم نشده است.")
     await message.answer(help_text)
 
+
+@router.message(Command("buy"))
+async def handle_buy_command(message: types.Message, state: FSMContext, session: AsyncSession):
+    plans = await database.get_subscription_plans(session)
+    if not plans:
+        await message.answer("در حال حاضر هیچ اشتراکی برای فروش تعریف نشده است.")
+        return
+
+    wallet_map = await database.get_wallet_settings_map(session)
+    available_currencies = [payments.CURRENCIES[code] for code in payments.CURRENCIES if code in wallet_map]
+    if not available_currencies:
+        await message.answer("متأسفانه هیچ ولتی برای دریافت پرداخت‌ها تنظیم نشده است. لطفاً بعداً تلاش کنید.")
+        return
+
+    lines = ["پلن‌های موجود:"]
+    buttons = []
+    for plan in plans:
+        lines.append(
+            f"• {plan.name} | مدت: {plan.duration_days} روز | قیمت: {plan.price_toman:,} تومان"
+        )
+        buttons.append([InlineKeyboardButton(text=f"انتخاب {plan.name}", callback_data=f"buy_plan_{plan.id}")])
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
+    await state.set_state(PurchaseFlow.select_plan)
+    await state.update_data(purchase_context={})
+    await message.answer("\n".join(lines), reply_markup=keyboard)
+
+
+@router.callback_query(F.data == "buy_cancel")
+async def handle_buy_cancel(query: types.CallbackQuery, state: FSMContext):
+    await state.clear()
+    await state.set_state(UserFlow.main_menu)
+    await query.message.answer("فرآیند خرید لغو شد.")
+    await query.answer()
+
+
+@router.callback_query(F.data.startswith("buy_plan_"))
+async def handle_buy_plan_selection(query: types.CallbackQuery, state: FSMContext, session: AsyncSession):
+    await query.answer()
+    try:
+        plan_id = int(query.data.replace("buy_plan_", ""))
+    except ValueError:
+        await query.message.answer("شناسه اشتراک نامعتبر است.")
+        return
+
+    plan = await database.get_subscription_plan_by_id(session, plan_id)
+    if not plan:
+        await query.message.answer("این اشتراک در دسترس نیست.")
+        return
+
+    wallet_map = await database.get_wallet_settings_map(session)
+    available = {code: payments.CURRENCIES[code] for code in payments.CURRENCIES if code in wallet_map}
+    if not available:
+        await query.message.answer("هیچ ولت فعالی برای دریافت پرداخت وجود ندارد.")
+        await state.clear()
+        await state.set_state(UserFlow.main_menu)
+        return
+
+    currency_buttons = [
+        [InlineKeyboardButton(text=meta.display_name, callback_data=f"buy_currency_{code}")]
+        for code, meta in available.items()
+    ]
+    currency_buttons.append([InlineKeyboardButton(text="لغو", callback_data="buy_cancel")])
+    keyboard = InlineKeyboardMarkup(inline_keyboard=currency_buttons)
+
+    summary = (
+        f"اشتراک انتخابی: {plan.name}\n"
+        f"مدت اشتراک: {plan.duration_days} روز\n"
+        f"سقف دانلود روزانه: {_format_limit(plan.download_limit_per_day)}\n"
+        f"سقف انکد روزانه: {_format_limit(plan.encode_limit_per_day)}\n"
+        f"قیمت: {plan.price_toman:,} تومان\n\n"
+        "ارز موردنظر برای پرداخت را انتخاب کنید:"
+    )
+
+    await state.update_data(selected_plan_id=plan.id)
+    await state.set_state(PurchaseFlow.select_currency)
+    await query.message.answer(summary, reply_markup=keyboard)
+
+
+@router.callback_query(F.data.startswith("buy_currency_"))
+async def handle_buy_currency_selection(query: types.CallbackQuery, state: FSMContext, session: AsyncSession):
+    await query.answer()
+    currency_code = query.data.replace("buy_currency_", "")
+    meta = payments.CURRENCIES.get(currency_code)
+    if not meta:
+        await query.message.answer("این ارز پشتیبانی نمی‌شود.")
+        return
+
+    data = await state.get_data()
+    plan_id = data.get("selected_plan_id")
+    if not plan_id:
+        await query.message.answer("لطفاً ابتدا یک اشتراک را انتخاب کنید.")
+        return
+
+    plan = await database.get_subscription_plan_by_id(session, plan_id)
+    if not plan:
+        await query.message.answer("این اشتراک دیگر در دسترس نیست.")
+        await state.clear()
+        await state.set_state(UserFlow.main_menu)
+        return
+
+    wallet = await database.get_wallet_setting(session, currency_code)
+    if not wallet:
+        await query.message.answer("برای این ارز ولتی ثبت نشده است.")
+        return
+
+    try:
+        price_toman = await payments.get_currency_price_toman(currency_code)
+        expected_amount = payments.calculate_crypto_amount(price_toman, plan.price_toman, meta.decimals)
+    except Exception as exc:
+        await query.message.answer(f"خطا در محاسبه مبلغ پرداخت: {exc}")
+        return
+
+    transaction = await database.create_purchase_transaction(
+        session,
+        user_id=query.from_user.id,
+        plan_id=plan.id,
+        currency_code=currency_code,
+        expected_amount=expected_amount,
+        expected_toman=plan.price_toman,
+        wallet_address=wallet.address,
+    )
+
+    instructions = (
+        f"🔐 اشتراک: {plan.name}\n"
+        f"مدت اشتراک: {plan.duration_days} روز\n"
+        f"سقف دانلود روزانه: {_format_limit(plan.download_limit_per_day)}\n"
+        f"سقف انکد روزانه: {_format_limit(plan.encode_limit_per_day)}\n"
+        f"قیمت: {plan.price_toman:,} تومان\n"
+        f"قیمت لحظه‌ای هر {meta.display_name}: {price_toman:,.0f} تومان\n"
+        f"مبلغ قابل پرداخت با {meta.display_name}: {_format_decimal(expected_amount)}\n"
+        f"آدرس ولت: {wallet.address}\n\n"
+        f"{meta.instructions}\n"
+        "پس از انجام تراکنش روی دکمه زیر بزنید و لینک تراکنش را ارسال کنید."
+    )
+
+    action_keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="ارسال لینک ID", callback_data="buy_send_link")],
+            [InlineKeyboardButton(text="لغو", callback_data="buy_cancel")],
+        ]
+    )
+
+    await state.set_state(PurchaseFlow.await_link)
+    await state.update_data(
+        selected_plan_id=plan.id,
+        currency_code=currency_code,
+        expected_amount=str(expected_amount),
+        transaction_id=transaction.id,
+    )
+    await query.message.answer(instructions, reply_markup=action_keyboard)
+
+
+@router.callback_query(F.data == "buy_send_link")
+async def prompt_for_transaction_link(query: types.CallbackQuery):
+    await query.answer()
+    await query.message.answer("لینک تراکنش خود را ارسال کنید (مطابق با سایت اکسپلورر معرفی‌شده).")
+
+
+@router.message(PurchaseFlow.await_link)
+async def receive_transaction_link(message: types.Message, state: FSMContext, session: AsyncSession):
+    link = (message.text or "").strip()
+    if not link:
+        await message.answer("لطفاً لینک تراکنش را ارسال کنید.")
+        return
+
+    data = await state.get_data()
+    plan_id = data.get("selected_plan_id")
+    currency_code = data.get("currency_code")
+    transaction_id = data.get("transaction_id")
+    expected_amount_str = data.get("expected_amount")
+
+    if not all([plan_id, currency_code, transaction_id, expected_amount_str]):
+        await message.answer("اطلاعات خرید کامل نیست. لطفاً دوباره /buy را امتحان کنید.")
+        await state.clear()
+        await state.set_state(UserFlow.main_menu)
+        return
+
+    wallet = await database.get_wallet_setting(session, currency_code)
+    if not wallet:
+        await message.answer("آدرس ولت یافت نشد. لطفاً با پشتیبانی تماس بگیرید.")
+        await state.clear()
+        await state.set_state(UserFlow.main_menu)
+        return
+
+    verification = await payments.verify_transaction(currency_code, wallet.address, link)
+    if not verification.success or verification.amount is None:
+        await message.answer(verification.message)
+        return
+
+    expected_amount = Decimal(expected_amount_str)
+    if verification.amount < expected_amount:
+        await message.answer(
+            "مبلغ تراکنش کمتر از مقدار مورد نیاز است. لطفاً مبلغ صحیح را واریز کنید یا با پشتیبانی در تماس باشید."
+        )
+        return
+
+    plan = await database.get_subscription_plan_by_id(session, plan_id)
+    if not plan:
+        await message.answer("اشتراک انتخابی دیگر در دسترس نیست. لطفاً با پشتیبانی تماس بگیرید.")
+        await state.clear()
+        await state.set_state(UserFlow.main_menu)
+        return
+
+    await database.update_purchase_transaction_status(
+        session,
+        transaction_id,
+        status="completed",
+        actual_amount=verification.amount,
+        transaction_hash=verification.tx_hash,
+        payment_link=link,
+    )
+
+    await database.apply_subscription_plan_to_user(session, user_id=message.from_user.id, plan=plan)
+
+    await message.answer(
+        (
+            "✅ اشتراک شما با موفقیت فعال شد.\n"
+            "می‌توانید از تمامی سایت‌های پشتیبانی‌شده استفاده کنید."
+        )
+    )
+    await state.clear()
+    await state.set_state(UserFlow.main_menu)
 
 @router.message(Command("cancel"))
 async def handle_cancel(message: types.Message, state: FSMContext):

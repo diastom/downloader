@@ -1,5 +1,6 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
+from decimal import Decimal
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
@@ -157,6 +158,193 @@ async def get_all_users(session: AsyncSession) -> list[models.User]:
     stmt = select(models.User)
     result = await session.execute(stmt)
     return result.scalars().all()
+
+
+# --- Subscription Plans & Payments ---
+async def get_subscription_plans(
+    session: AsyncSession,
+    *,
+    include_inactive: bool = False,
+) -> list[models.SubscriptionPlan]:
+    stmt = select(models.SubscriptionPlan).order_by(models.SubscriptionPlan.id)
+    if not include_inactive:
+        stmt = stmt.where(models.SubscriptionPlan.is_active.is_(True))
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def get_subscription_plan_by_id(
+    session: AsyncSession,
+    plan_id: int,
+) -> models.SubscriptionPlan | None:
+    stmt = select(models.SubscriptionPlan).where(models.SubscriptionPlan.id == plan_id)
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+async def create_subscription_plan(
+    session: AsyncSession,
+    *,
+    name: str,
+    duration_days: int,
+    download_limit_per_day: int,
+    encode_limit_per_day: int,
+    price_toman: int,
+    description: str | None = None,
+) -> models.SubscriptionPlan:
+    plan = models.SubscriptionPlan(
+        name=name,
+        duration_days=max(1, duration_days),
+        download_limit_per_day=download_limit_per_day,
+        encode_limit_per_day=encode_limit_per_day,
+        price_toman=price_toman,
+        description=description,
+    )
+    session.add(plan)
+    await session.commit()
+    await session.refresh(plan)
+    return plan
+
+
+async def delete_subscription_plan(session: AsyncSession, plan_id: int) -> bool:
+    plan = await get_subscription_plan_by_id(session, plan_id)
+    if not plan:
+        return False
+    await session.delete(plan)
+    await session.commit()
+    return True
+
+
+async def get_wallet_settings_map(session: AsyncSession) -> dict[str, models.WalletSetting]:
+    stmt = select(models.WalletSetting)
+    result = await session.execute(stmt)
+    return {wallet.currency_code: wallet for wallet in result.scalars().all()}
+
+
+async def get_wallet_setting(
+    session: AsyncSession,
+    currency_code: str,
+) -> models.WalletSetting | None:
+    stmt = select(models.WalletSetting).where(models.WalletSetting.currency_code == currency_code)
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+async def set_wallet_setting(
+    session: AsyncSession,
+    *,
+    currency_code: str,
+    address: str,
+    explorer_hint: str | None = None,
+) -> models.WalletSetting:
+    wallet = await get_wallet_setting(session, currency_code)
+    if wallet:
+        wallet.address = address
+        wallet.explorer_hint = explorer_hint
+    else:
+        wallet = models.WalletSetting(
+            currency_code=currency_code,
+            address=address,
+            explorer_hint=explorer_hint,
+        )
+        session.add(wallet)
+    await session.commit()
+    await session.refresh(wallet)
+    return wallet
+
+
+async def cancel_user_pending_transactions(session: AsyncSession, user_id: int) -> None:
+    stmt = select(models.PurchaseTransaction).where(
+        models.PurchaseTransaction.user_id == user_id,
+        models.PurchaseTransaction.status == "pending",
+    )
+    result = await session.execute(stmt)
+    updated = False
+    for transaction in result.scalars().all():
+        transaction.status = "cancelled"
+        updated = True
+    if updated:
+        await session.commit()
+
+
+async def create_purchase_transaction(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    plan_id: int,
+    currency_code: str,
+    expected_amount: Decimal,
+    expected_toman: int,
+    wallet_address: str,
+) -> models.PurchaseTransaction:
+    await cancel_user_pending_transactions(session, user_id)
+    transaction = models.PurchaseTransaction(
+        user_id=user_id,
+        plan_id=plan_id,
+        currency_code=currency_code,
+        expected_amount=expected_amount,
+        expected_toman=expected_toman,
+        wallet_address=wallet_address,
+    )
+    session.add(transaction)
+    await session.commit()
+    await session.refresh(transaction)
+    return transaction
+
+
+async def get_purchase_transaction_by_id(
+    session: AsyncSession,
+    transaction_id: int,
+) -> models.PurchaseTransaction | None:
+    stmt = select(models.PurchaseTransaction).where(models.PurchaseTransaction.id == transaction_id)
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+async def update_purchase_transaction_status(
+    session: AsyncSession,
+    transaction_id: int,
+    *,
+    status: str,
+    actual_amount: Decimal | None = None,
+    transaction_hash: str | None = None,
+    payment_link: str | None = None,
+) -> models.PurchaseTransaction | None:
+    transaction = await get_purchase_transaction_by_id(session, transaction_id)
+    if not transaction:
+        return None
+    transaction.status = status
+    if actual_amount is not None:
+        transaction.actual_amount = actual_amount
+    if transaction_hash is not None:
+        transaction.transaction_hash = transaction_hash
+    if payment_link is not None:
+        transaction.payment_link = payment_link
+    if status == "completed":
+        transaction.verified_at = datetime.utcnow()
+    await session.commit()
+    await session.refresh(transaction)
+    return transaction
+
+
+async def apply_subscription_plan_to_user(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    plan: models.SubscriptionPlan,
+) -> models.User:
+    user = await get_or_create_user(session, user_id)
+    now = datetime.utcnow()
+    base_time = user.sub_expiry_date if user.sub_expiry_date and user.sub_expiry_date > now else now
+    user.sub_is_active = True
+    user.sub_expiry_date = base_time + timedelta(days=plan.duration_days)
+    user.sub_download_limit = plan.download_limit_per_day if plan.download_limit_per_day >= 0 else -1
+    user.sub_encode_limit = plan.encode_limit_per_day if plan.encode_limit_per_day >= 0 else -1
+    user.sub_allowed_sites = {site: True for category in ALL_SUPPORTED_SITES.values() for site in category}
+    flag_modified(user, "sub_allowed_sites")
+    await session.commit()
+    await session.refresh(user)
+    return user
 
 async def has_feature_access(session: AsyncSession, user_id: int, feature: str) -> bool:
     """
