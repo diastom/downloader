@@ -8,7 +8,9 @@ logger = logging.getLogger(__name__)
 
 BITPIN_MARKETS_URL = "https://api.bitpin.ir/v1/mkt/markets/"
 NOBITEX_STATS_URL = "https://api.nobitex.ir/market/stats"
-NOWPAYMENTS_API_BASE = "https://api-sandbox.nowpayments.io/v1/invoice-payment"
+NOWPAYMENTS_API_ROOT = "https://api-sandbox.nowpayments.io/v1"
+NOWPAYMENTS_CREATE_INVOICE_URL = f"{NOWPAYMENTS_API_ROOT}/invoice-payment"
+NOWPAYMENTS_INVOICE_STATUS_URL = f"{NOWPAYMENTS_API_ROOT}/invoice"
 
 
 async def _async_request(method: str, url: str, **kwargs) -> requests.Response:
@@ -93,13 +95,22 @@ async def create_nowpayments_invoice(
         "order_id": order_id,
         "order_description": description,
     }
-    response = await _async_request("post", f"{NOWPAYMENTS_API_BASE}/invoice", json=payload, headers=headers)
+    response = await _async_request(
+        "post",
+        NOWPAYMENTS_CREATE_INVOICE_URL,
+        json=payload,
+        headers=headers,
+    )
     response.raise_for_status()
     return response.json()
 
 
 async def get_nowpayments_invoice_status(*, api_key: str, invoice_id: str) -> dict[str, Any]:
     headers = {"x-api-key": api_key}
-    response = await _async_request("get", f"{NOWPAYMENTS_API_BASE}/invoice/{invoice_id}", headers=headers)
+    response = await _async_request(
+        "get",
+        f"{NOWPAYMENTS_INVOICE_STATUS_URL}/{invoice_id}",
+        headers=headers,
+    )
     response.raise_for_status()
     return response.json()
