@@ -5,6 +5,7 @@ from typing import Iterable
 from aiogram import Bot, F, Router, types
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery
+from requests import HTTPError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from utils import database
@@ -12,7 +13,7 @@ from utils.db_session import AsyncSessionLocal
 from utils.payments import (
     create_nowpayments_invoice,
     get_live_price,
-    get_nowpayments_invoice_status,
+    get_nowpayments_payment_status,
 )
 
 logger = logging.getLogger(__name__)
@@ -82,9 +83,15 @@ async def _poll_invoice_status(*, bot: Bot, invoice_id: str, user_id: int, plan_
         attempts += 1
 
         try:
-            invoice_info = await get_nowpayments_invoice_status(api_key=api_key, invoice_id=invoice_id)
+            invoice_info = await get_nowpayments_payment_status(api_key=api_key, payment_id=invoice_id)
+        except HTTPError as exc:
+            if exc.response is not None and exc.response.status_code == 404:
+                logger.debug("Payment %s not yet available for status polling", invoice_id)
+                continue
+            logger.warning("Failed to fetch payment status for %s: %s", invoice_id, exc)
+            continue
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Failed to fetch invoice status for %s: %s", invoice_id, exc)
+            logger.warning("Failed to fetch payment status for %s: %s", invoice_id, exc)
             continue
 
         status = (
@@ -113,7 +120,8 @@ async def _poll_invoice_status(*, bot: Bot, invoice_id: str, user_id: int, plan_
                     user_id,
                     (
                         "پرداخت شما با موفقیت تأیید شد.\n"
-                        f"اشتراک شما تا تاریخ {user.sub_expiry_date:%Y-%m-%d} فعال شد."
+                        "اشتراک شما فعال شد.\n"
+                        f"تاریخ انقضا: {user.sub_expiry_date:%Y-%m-%d}"
                     ),
                 )
                 return
