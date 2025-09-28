@@ -182,11 +182,8 @@ async def handle_plan_purchase(query: CallbackQuery, session: AsyncSession):
         await query.message.answer("ایجاد پرداخت با خطا مواجه شد. لطفاً کمی بعد دوباره تلاش کنید.")
         return
 
-    invoice_id = str(
-        payment_response.get("id")
-        or payment_response.get("invoice_id")
-        or payment_response.get("payment_id")
-    )
+    raw_invoice_id = payment_response.get("invoice_id") or payment_response.get("id")
+    invoice_id = str(raw_invoice_id) if raw_invoice_id is not None else None
     invoice_url = payment_response.get("invoice_url") or payment_response.get("pay_url")
     pay_amount = payment_response.get("pay_amount", crypto_amount)
     pay_currency = payment_response.get("pay_currency", PAYMENT_CURRENCY)
