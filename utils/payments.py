@@ -10,7 +10,7 @@ BITPIN_MARKETS_URL = "https://api.bitpin.ir/v1/mkt/markets/"
 NOBITEX_STATS_URL = "https://api.nobitex.ir/market/stats"
 NOWPAYMENTS_API_ROOT = "https://api-sandbox.nowpayments.io/v1"
 NOWPAYMENTS_CREATE_INVOICE_URL = f"{NOWPAYMENTS_API_ROOT}/invoice"
-NOWPAYMENTS_PAYMENT_STATUS_URL = f"{NOWPAYMENTS_API_ROOT}/payment"
+NOWPAYMENTS_INVOICE_STATUS_URL = f"{NOWPAYMENTS_API_ROOT}/invoice"
 
 
 async def _async_request(method: str, url: str, **kwargs) -> requests.Response:
@@ -109,7 +109,7 @@ async def get_nowpayments_payment_status(*, api_key: str, payment_id: str) -> di
     headers = {"x-api-key": api_key}
     response = await _async_request(
         "get",
-        f"{NOWPAYMENTS_PAYMENT_STATUS_URL}/{payment_id}",
+        f"{NOWPAYMENTS_INVOICE_STATUS_URL}/{payment_id}",
         headers=headers,
     )
     response.raise_for_status()
