@@ -1,7 +1,7 @@
 from aiogram import Dispatcher, Bot
 from aiogram.fsm.storage.memory import MemoryStorage
 from utils.db_session import AsyncSessionLocal
-from bot.handlers import admin, common, downloader, settings as user_settings, video
+from bot.handlers import admin, common, downloader, payments, settings as user_settings, video
 from bot.middlewares import DbSessionMiddleware
 
 
@@ -19,6 +19,7 @@ def setup_dispatcher() -> Dispatcher:
     # Include all the routers from the handlers package
     dp.include_router(common.router)
     dp.include_router(admin.router)
+    dp.include_router(payments.router)
     dp.include_router(user_settings.router)
     dp.include_router(video.router)
     dp.include_router(downloader.router) # This should be last as it has a broad regex

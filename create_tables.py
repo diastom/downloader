@@ -15,6 +15,9 @@ from utils.models import (
     BotText,
     DownloadRecord,
     TaskUsage,
+    SubscriptionPlan,
+    PaymentSetting,
+    PaymentTransaction,
 )
 
 async def create_db_tables():

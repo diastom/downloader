@@ -1,7 +1,7 @@
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, delete
 from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -157,6 +157,158 @@ async def get_all_users(session: AsyncSession) -> list[models.User]:
     stmt = select(models.User)
     result = await session.execute(stmt)
     return result.scalars().all()
+
+
+async def get_subscription_plan(session: AsyncSession, plan_id: int) -> models.SubscriptionPlan | None:
+    stmt = select(models.SubscriptionPlan).where(models.SubscriptionPlan.id == plan_id)
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+async def list_subscription_plans(
+    session: AsyncSession,
+    *,
+    include_inactive: bool = False,
+) -> list[models.SubscriptionPlan]:
+    stmt = select(models.SubscriptionPlan).order_by(models.SubscriptionPlan.price_toman)
+    if not include_inactive:
+        stmt = stmt.where(models.SubscriptionPlan.is_active.is_(True))
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def create_subscription_plan(
+    session: AsyncSession,
+    *,
+    title: str,
+    description: str | None,
+    duration_days: int,
+    download_limit: int,
+    encode_limit: int,
+    price_toman: int,
+) -> models.SubscriptionPlan:
+    plan = models.SubscriptionPlan(
+        title=title.strip(),
+        description=description.strip() if description else None,
+        duration_days=duration_days,
+        download_limit=download_limit,
+        encode_limit=encode_limit,
+        price_toman=price_toman,
+    )
+    session.add(plan)
+    await session.commit()
+    await session.refresh(plan)
+    return plan
+
+
+async def delete_subscription_plan(session: AsyncSession, plan_id: int) -> bool:
+    stmt = delete(models.SubscriptionPlan).where(models.SubscriptionPlan.id == plan_id)
+    result = await session.execute(stmt)
+    deleted = result.rowcount > 0
+    if deleted:
+        await session.commit()
+    return deleted
+
+
+async def get_payment_setting(
+    session: AsyncSession,
+    key: str,
+    default: str | None = None,
+) -> str | None:
+    stmt = select(models.PaymentSetting).where(models.PaymentSetting.key == key)
+    result = await session.execute(stmt)
+    setting = result.scalar_one_or_none()
+    return setting.value if setting else default
+
+
+async def set_payment_setting(session: AsyncSession, key: str, value: str) -> models.PaymentSetting:
+    stmt = select(models.PaymentSetting).where(models.PaymentSetting.key == key)
+    result = await session.execute(stmt)
+    setting = result.scalar_one_or_none()
+
+    if setting:
+        setting.value = value
+    else:
+        setting = models.PaymentSetting(key=key, value=value)
+        session.add(setting)
+
+    await session.commit()
+    await session.refresh(setting)
+    return setting
+
+
+async def clear_payment_setting(session: AsyncSession, key: str) -> None:
+    stmt = delete(models.PaymentSetting).where(models.PaymentSetting.key == key)
+    await session.execute(stmt)
+    await session.commit()
+
+
+async def create_payment_transaction(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    plan_id: int,
+    payment_id: str,
+    invoice_url: str,
+    pay_amount: str,
+    pay_currency: str,
+) -> models.PaymentTransaction:
+    transaction = models.PaymentTransaction(
+        user_id=user_id,
+        plan_id=plan_id,
+        payment_id=payment_id,
+        invoice_url=invoice_url,
+        pay_amount=pay_amount,
+        pay_currency=pay_currency,
+    )
+    session.add(transaction)
+    await session.commit()
+    await session.refresh(transaction)
+    return transaction
+
+
+async def update_payment_transaction_status(
+    session: AsyncSession,
+    *,
+    payment_id: str,
+    status: str,
+) -> models.PaymentTransaction | None:
+    stmt = select(models.PaymentTransaction).where(models.PaymentTransaction.payment_id == payment_id)
+    result = await session.execute(stmt)
+    transaction = result.scalar_one_or_none()
+    if not transaction:
+        return None
+
+    transaction.status = status
+    await session.commit()
+    await session.refresh(transaction)
+    return transaction
+
+
+async def apply_subscription_plan(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    plan: models.SubscriptionPlan,
+) -> models.User:
+    user = await get_or_create_user(session, user_id)
+
+    base_time = user.sub_expiry_date or datetime.utcnow()
+    if base_time < datetime.utcnow():
+        base_time = datetime.utcnow()
+
+    user.sub_is_active = True
+    user.sub_expiry_date = base_time + timedelta(days=plan.duration_days)
+    user.sub_download_limit = plan.download_limit
+    user.sub_encode_limit = plan.encode_limit
+    user.allow_thumbnail = True
+    user.allow_watermark = True
+    user.sub_allowed_sites = {site: True for category in ALL_SUPPORTED_SITES.values() for site in category}
+    flag_modified(user, "sub_allowed_sites")
+
+    await session.commit()
+    await session.refresh(user)
+    return user
 
 async def has_feature_access(session: AsyncSession, user_id: int, feature: str) -> bool:
     """
