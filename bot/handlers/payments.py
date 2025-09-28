@@ -99,6 +99,19 @@ async def _check_invoice_status_once(
     if not status:
         return
 
+        try:
+            invoice_info = await get_nowpayments_payment_status(api_key=api_key, payment_id=invoice_id)
+        except HTTPError as exc:
+            if exc.response is not None and exc.response.status_code == 404:
+                logger.debug("Payment %s not yet available for status polling", invoice_id)
+                continue
+            logger.warning("Failed to fetch payment status for %s: %s", invoice_id, exc)
+            continue
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Failed to fetch payment status for %s: %s", invoice_id, exc)
+            continue
+
+
     async with AsyncSessionLocal() as new_session:
         await database.update_payment_transaction_status(
             new_session,
@@ -111,7 +124,15 @@ async def _check_invoice_status_once(
             if not plan:
                 await bot.send_message(
                     user_id,
+
                     "پلن خریداری‌شده دیگر وجود ندارد. لطفاً با پشتیبانی تماس بگیرید.",
+
+                    (
+                        "پرداخت شما با موفقیت تأیید شد.\n"
+                        "اشتراک شما فعال شد.\n"
+                        f"تاریخ انقضا: {user.sub_expiry_date:%Y-%m-%d}"
+                    ),
+
                 )
                 return
 
