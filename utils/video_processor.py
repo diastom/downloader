@@ -71,12 +71,43 @@ def apply_watermark_to_video(
 
     try:
         logger.info(f"Applying watermark to {input_path}...")
+
+        _, video_width, video_height = get_video_metadata(input_path)
+        dynamic_fontsize = settings.size
+        dynamic_stroke = settings.stroke
+
+        if video_width > 0 and video_height > 0:
+            reference_dimension = 1080
+            base_dimension = min(video_width, video_height)
+            scale_factor = base_dimension / reference_dimension
+
+            if scale_factor != 1:
+                scaled_size = int(round(settings.size * scale_factor))
+                scaled_stroke = int(round(settings.stroke * scale_factor))
+
+                dynamic_fontsize = max(scaled_size, 10)
+                dynamic_stroke = max(scaled_stroke, 1) if settings.stroke else 0
+
+                logger.debug(
+                    "Scaling watermark size from %s to %s (stroke %s -> %s) based on video resolution %sx%s",
+                    settings.size,
+                    dynamic_fontsize,
+                    settings.stroke,
+                    dynamic_stroke,
+                    video_width,
+                    video_height,
+                )
+
         (
             ffmpeg
             .input(input_path)
             .output(
                 output_path,
-                vf=f"drawtext=fontfile='{FONT_FILE}':text='{settings.text}':fontcolor={settings.color}:fontsize={settings.size}:{position}:borderw={settings.stroke}:bordercolor=black@0.6",
+                vf=(
+                    f"drawtext=fontfile='{FONT_FILE}':text='{settings.text}':"
+                    f"fontcolor={settings.color}:fontsize={dynamic_fontsize}:"
+                    f"{position}:borderw={dynamic_stroke}:bordercolor=black@0.6"
+                ),
                 **{'c:v': 'libx265', 'preset': 'fast', 'crf': 25, 'c:a': 'copy', 'pix_fmt': 'yuv420p'}
             )
             .overwrite_output()
