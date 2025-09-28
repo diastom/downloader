@@ -189,6 +189,8 @@ async def create_subscription_plan(
     duration_days: int,
     download_limit_per_day: int,
     encode_limit_per_day: int,
+    download_limit: int = -1,
+    encode_limit: int = -1,
     price_toman: int,
     description: str | None = None,
 ) -> models.SubscriptionPlan:
@@ -197,6 +199,8 @@ async def create_subscription_plan(
         duration_days=max(1, duration_days),
         download_limit_per_day=download_limit_per_day,
         encode_limit_per_day=encode_limit_per_day,
+        download_limit=download_limit,
+        encode_limit=encode_limit,
         price_toman=price_toman,
         description=description,
     )

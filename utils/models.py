@@ -81,6 +81,8 @@ class SubscriptionPlan(Base):
     duration_days = Column(Integer, nullable=False)
     download_limit_per_day = Column(Integer, nullable=False, default=-1)
     encode_limit_per_day = Column(Integer, nullable=False, default=-1)
+    download_limit = Column(Integer, nullable=False, default=-1)
+    encode_limit = Column(Integer, nullable=False, default=-1)
     price_toman = Column(Integer, nullable=False)
     description = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True, nullable=False)

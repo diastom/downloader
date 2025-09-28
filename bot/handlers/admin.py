@@ -33,7 +33,9 @@ class AdminFSM(StatesGroup):
     await_plan_name = State()
     await_plan_duration = State()
     await_plan_download_limit = State()
+    await_plan_download_total = State()
     await_plan_encode_limit = State()
+    await_plan_encode_total = State()
     await_plan_price = State()
     await_plan_description = State()
     await_wallet_address = State()
@@ -72,6 +74,8 @@ async def build_subscription_overview(session: AsyncSession) -> tuple[str, Inlin
                     f"مدت اشتراک: {plan.duration_days} روز\n"
                     f"سقف دانلود روزانه: {_format_limit_value(plan.download_limit_per_day)}\n"
                     f"سقف انکد روزانه: {_format_limit_value(plan.encode_limit_per_day)}\n"
+                    f"سقف دانلود کل: {_format_limit_value(plan.download_limit)}\n"
+                    f"سقف انکد کل: {_format_limit_value(plan.encode_limit)}\n"
                     f"قیمت: {plan.price_toman:,} تومان"
                 )
             )
@@ -326,6 +330,21 @@ async def sales_plan_receive_download_limit(message: types.Message, state: FSMCo
     plan = data.get("new_plan", {})
     plan["download_limit_per_day"] = limit
     await state.update_data(new_plan=plan)
+    await message.answer("سقف دانلود کلی را وارد کنید (برای نامحدود عدد -1 را ارسال کنید):")
+    await state.set_state(AdminFSM.await_plan_download_total)
+
+
+@router.message(AdminFSM.await_plan_download_total)
+async def sales_plan_receive_download_total(message: types.Message, state: FSMContext):
+    try:
+        limit = int(message.text)
+    except (TypeError, ValueError):
+        await message.answer("لطفاً یک عدد صحیح وارد کنید:")
+        return
+    data = await state.get_data()
+    plan = data.get("new_plan", {})
+    plan["download_limit"] = limit
+    await state.update_data(new_plan=plan)
     await message.answer("سقف انکد روزانه را وارد کنید (برای نامحدود عدد -1 را ارسال کنید):")
     await state.set_state(AdminFSM.await_plan_encode_limit)
 
@@ -340,6 +359,21 @@ async def sales_plan_receive_encode_limit(message: types.Message, state: FSMCont
     data = await state.get_data()
     plan = data.get("new_plan", {})
     plan["encode_limit_per_day"] = limit
+    await state.update_data(new_plan=plan)
+    await message.answer("سقف انکد کلی را وارد کنید (برای نامحدود عدد -1 را ارسال کنید):")
+    await state.set_state(AdminFSM.await_plan_encode_total)
+
+
+@router.message(AdminFSM.await_plan_encode_total)
+async def sales_plan_receive_encode_total(message: types.Message, state: FSMContext):
+    try:
+        limit = int(message.text)
+    except (TypeError, ValueError):
+        await message.answer("لطفاً یک عدد صحیح وارد کنید:")
+        return
+    data = await state.get_data()
+    plan = data.get("new_plan", {})
+    plan["encode_limit"] = limit
     await state.update_data(new_plan=plan)
     await message.answer("قیمت اشتراک را به تومان وارد کنید:")
     await state.set_state(AdminFSM.await_plan_price)

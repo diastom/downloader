@@ -167,6 +167,8 @@ async def handle_buy_plan_selection(query: types.CallbackQuery, state: FSMContex
         f"مدت اشتراک: {plan.duration_days} روز\n"
         f"سقف دانلود روزانه: {_format_limit(plan.download_limit_per_day)}\n"
         f"سقف انکد روزانه: {_format_limit(plan.encode_limit_per_day)}\n"
+        f"سقف دانلود کلی: {_format_limit(plan.download_limit)}\n"
+        f"سقف انکد کلی: {_format_limit(plan.encode_limit)}\n"
         f"قیمت: {plan.price_toman:,} تومان\n\n"
         "ارز موردنظر برای پرداخت را انتخاب کنید:"
     )
