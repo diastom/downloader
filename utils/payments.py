@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 BITPIN_MARKETS_URL = "https://api.bitpin.ir/v1/mkt/markets/"
 NOBITEX_STATS_URL = "https://api.nobitex.ir/market/stats"
-NOWPAYMENTS_API_BASE = "https://api.nowpayments.io/v1"
+NOWPAYMENTS_API_BASE = "https://sandbox.nowpayments.io/v1/invoice"
 
 
 async def _async_request(method: str, url: str, **kwargs) -> requests.Response:
