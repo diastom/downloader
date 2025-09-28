@@ -77,7 +77,7 @@ async def get_live_price(symbol: str = "trx") -> float:
     return price
 
 
-async def create_nowpayments_payment(
+async def create_nowpayments_invoice(
     *,
     api_key: str,
     amount: float,
@@ -93,13 +93,13 @@ async def create_nowpayments_payment(
         "order_id": order_id,
         "order_description": description,
     }
-    response = await _async_request("post", f"{NOWPAYMENTS_API_BASE}/payment", json=payload, headers=headers)
+    response = await _async_request("post", f"{NOWPAYMENTS_API_BASE}/invoice", json=payload, headers=headers)
     response.raise_for_status()
     return response.json()
 
 
-async def get_nowpayments_payment_status(*, api_key: str, payment_id: str) -> dict[str, Any]:
+async def get_nowpayments_invoice_status(*, api_key: str, invoice_id: str) -> dict[str, Any]:
     headers = {"x-api-key": api_key}
-    response = await _async_request("get", f"{NOWPAYMENTS_API_BASE}/payment/{payment_id}", headers=headers)
+    response = await _async_request("get", f"{NOWPAYMENTS_API_BASE}/invoice/{invoice_id}", headers=headers)
     response.raise_for_status()
     return response.json()
