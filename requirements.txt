@@ -1,4 +1,5 @@
 aiogram==3.10.0
+aiohttp
 yt-dlp
 celery
 redis

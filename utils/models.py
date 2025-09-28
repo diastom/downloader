@@ -8,7 +8,9 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    Numeric,
     String,
+    Text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
@@ -62,6 +64,67 @@ class User(Base):
         cascade="all, delete-orphan",
         order_by="TaskUsage.id",
     )
+    purchases = relationship(
+        "PurchaseTransaction",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        order_by="PurchaseTransaction.id",
+    )
+
+
+class SubscriptionPlan(Base):
+    __tablename__ = "subscription_plans"
+    __table_args__ = {"schema": "public"}
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False)
+    duration_days = Column(Integer, nullable=False)
+    download_limit_per_day = Column(Integer, nullable=False, default=-1)
+    encode_limit_per_day = Column(Integer, nullable=False, default=-1)
+    price_toman = Column(Integer, nullable=False)
+    description = Column(Text, nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    purchases = relationship(
+        "PurchaseTransaction",
+        back_populates="plan",
+        cascade="all, delete-orphan",
+        order_by="PurchaseTransaction.id",
+    )
+
+
+class WalletSetting(Base):
+    __tablename__ = "wallet_settings"
+    __table_args__ = {"schema": "public"}
+
+    id = Column(Integer, primary_key=True)
+    currency_code = Column(String, unique=True, nullable=False)
+    address = Column(String, nullable=False)
+    explorer_hint = Column(String, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class PurchaseTransaction(Base):
+    __tablename__ = "purchase_transactions"
+    __table_args__ = {"schema": "public"}
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(BigInteger, ForeignKey("public.users.id"), nullable=False, index=True)
+    plan_id = Column(Integer, ForeignKey("public.subscription_plans.id"), nullable=False, index=True)
+    currency_code = Column(String, nullable=False)
+    expected_amount = Column(Numeric(24, 8), nullable=False)
+    expected_toman = Column(Integer, nullable=False)
+    wallet_address = Column(String, nullable=False)
+    status = Column(String, default="pending", nullable=False, index=True)
+    transaction_hash = Column(String, nullable=True)
+    payment_link = Column(String, nullable=True)
+    actual_amount = Column(Numeric(24, 8), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    verified_at = Column(DateTime, nullable=True)
+
+    user = relationship("User", back_populates="purchases")
+    plan = relationship("SubscriptionPlan", back_populates="purchases")
 
 
 class Thumbnail(Base):
