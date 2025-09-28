@@ -37,6 +37,7 @@ def encode_video_task(user_id: int, username: str, chat_id: int, video_file_id: 
 
             final_video_path = original_video_path
             custom_thumb_path = None
+            auto_thumb_path = None
             applied_tasks = []
 
             if options.get("selected_quality") and options["selected_quality"] != "original":
@@ -91,6 +92,39 @@ def encode_video_task(user_id: int, username: str, chat_id: int, video_file_id: 
                             user_id,
                         )
                         custom_thumb_path = None
+
+            if not custom_thumb_path:
+                auto_thumb_path = task_dir / f"auto_thumb_{user_id}.jpg"
+                thumb_success = await asyncio.to_thread(
+                    video_processor.generate_thumbnail_from_video,
+                    str(final_video_path),
+                    str(auto_thumb_path),
+                )
+                if thumb_success:
+                    prepared = await asyncio.to_thread(
+                        video_processor.prepare_thumbnail_image,
+                        auto_thumb_path,
+                    )
+                    if prepared:
+                        custom_thumb_path = auto_thumb_path
+                        applied_tasks.append("thumb_auto")
+                    else:
+                        logger.warning(
+                            "Auto-generated thumbnail for user %s could not be prepared and will be skipped.",
+                            user_id,
+                        )
+                        if auto_thumb_path and auto_thumb_path.exists():
+                            auto_thumb_path.unlink()
+                        auto_thumb_path = None
+                else:
+                    logger.warning(
+                        "Failed to auto-generate thumbnail for user %s from video %s.",
+                        user_id,
+                        final_video_path,
+                    )
+                    if auto_thumb_path and auto_thumb_path.exists():
+                        auto_thumb_path.unlink()
+                    auto_thumb_path = None
 
             await bot.edit_message_text("📤 در حال آپلود ویدیوی نهایی...", chat_id=chat_id, message_id=status_message.message_id)
             duration, width, height = await asyncio.to_thread(video_processor.get_video_metadata, str(final_video_path))

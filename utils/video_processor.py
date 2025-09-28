@@ -77,7 +77,7 @@ def apply_watermark_to_video(
             .output(
                 output_path,
                 vf=f"drawtext=fontfile='{FONT_FILE}':text='{settings.text}':fontcolor={settings.color}:fontsize={settings.size}:{position}:borderw={settings.stroke}:bordercolor=black@0.6",
-                **{'c:v': 'libx264', 'preset': 'fast', 'crf': 25, 'c:a': 'copy'}
+                **{'c:v': 'libx265', 'preset': 'fast', 'crf': 25, 'c:a': 'copy', 'pix_fmt': 'yuv420p'}
             )
             .overwrite_output()
             .run(capture_stdout=True, capture_stderr=True)
@@ -197,7 +197,13 @@ def transcode_video(input_path: str, output_path: str, height: int) -> bool:
         (
             ffmpeg
             .input(input_path)
-            .output(output_path, vf=f'scale=-2:{height}', preset='fast', crf=24)
+            .output(
+                output_path,
+                vf=f'scale=-2:{height}',
+                preset='fast',
+                crf=24,
+                **{'c:v': 'libx265', 'c:a': 'copy', 'pix_fmt': 'yuv420p'}
+            )
             .overwrite_output()
             .run(capture_stdout=True, capture_stderr=True)
         )
