@@ -4,7 +4,14 @@ from aiogram import Router, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery, ReplyKeyboardRemove
+from aiogram.types import (
+    ReplyKeyboardMarkup,
+    KeyboardButton,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    CallbackQuery,
+    ReplyKeyboardRemove,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -29,6 +36,13 @@ class AdminFSM(StatesGroup):
     await_sub_user_id = State()
     manage_user_sub = State()
     await_help_text = State()
+    sales_menu = State()
+    await_plan_title = State()
+    await_plan_duration = State()
+    await_plan_download_limit = State()
+    await_plan_encode_limit = State()
+    await_plan_price = State()
+    await_api_key = State()
 
 # --- Keyboards ---
 def get_admin_panel_keyboard() -> ReplyKeyboardMarkup:
@@ -36,8 +50,74 @@ def get_admin_panel_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=[
         [KeyboardButton(text="📊 آمار"), KeyboardButton(text="📢 همگانی")],
         [KeyboardButton(text="⚙️ مدیریت اشتراک"), KeyboardButton(text="📝 متن ها")],
+        [KeyboardButton(text="🛒 تنظیمات فروش")],
         [KeyboardButton(text="❌ خروج از پنل")]
     ], resize_keyboard=True)
+
+
+def _format_limit(value: int) -> str:
+    return "نامحدود" if value == -1 else f"{value}"
+
+
+async def build_sales_overview(session: AsyncSession) -> tuple[str, InlineKeyboardMarkup]:
+    _ = await database.list_subscription_plans(session, include_inactive=True)
+    text = "لطفاً یکی از گزینه‌های فروش را انتخاب کنید."
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="اشتراک ها", callback_data="sales_manage_plans")],
+            [InlineKeyboardButton(text="مدیریت API", callback_data="sales_manage_api")],
+            [InlineKeyboardButton(text="🔙 بازگشت", callback_data="sales_back")],
+        ]
+    )
+    return text, keyboard
+
+
+async def build_plan_management_keyboard(session: AsyncSession) -> tuple[str, InlineKeyboardMarkup]:
+    plans = await database.list_subscription_plans(session, include_inactive=True)
+    overview_lines = []
+    for index, plan in enumerate(plans, start=1):
+        overview_lines.append(
+            "\n".join(
+                [
+                    f"{index}. {plan.title}",
+                    f"مدت: {plan.duration_days} روز",
+                    f"قیمت: {plan.price_toman:,} تومان",
+                ]
+            )
+        )
+    overview = "\n\n".join(overview_lines) if overview_lines else "هیچ اشتراکی تعریف نشده است."
+
+    keyboard_buttons = [
+        [InlineKeyboardButton(text="➕ افزودن نوع جدید اشتراک", callback_data="sales_add_plan")],
+        [InlineKeyboardButton(text="➖ حذف نوع اشتراک", callback_data="sales_remove_plan")],
+        [InlineKeyboardButton(text="🔙 بازگشت", callback_data="sales_back_overview")],
+    ]
+    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+    return overview, keyboard
+
+
+def build_plan_removal_keyboard(plans: list, *, empty_text: str) -> tuple[str, InlineKeyboardMarkup]:
+    if not plans:
+        text = empty_text
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="🔙 بازگشت", callback_data="sales_manage_plans")]]
+        )
+        return text, keyboard
+
+    rows = []
+    for plan in plans:
+        rows.append([InlineKeyboardButton(text=plan.title, callback_data=f"sales_delete_{plan.id}")])
+    rows.append([InlineKeyboardButton(text="لغو", callback_data="sales_manage_plans")])
+    keyboard = InlineKeyboardMarkup(inline_keyboard=rows)
+    return "کدام اشتراک حذف شود؟", keyboard
+
+
+def mask_api_key(api_key: str | None) -> str:
+    if not api_key:
+        return "ثبت نشده"
+    if len(api_key) <= 6:
+        return "*" * len(api_key)
+    return f"{api_key[:4]}{'*' * (len(api_key) - 8)}{api_key[-4:]}"
 
 async def get_subscription_panel(session: AsyncSession, target_user_id: int) -> tuple[str, InlineKeyboardMarkup]:
     """Creates the inline keyboard for managing a user's subscription."""
@@ -144,6 +224,202 @@ async def show_stats(message: types.Message, session: AsyncSession):
     )
 
     await message.answer(stats_text)
+
+
+@router.message(AdminFSM.panel, F.text == "🛒 تنظیمات فروش")
+async def show_sales_settings(message: types.Message, state: FSMContext, session: AsyncSession):
+    text, keyboard = await build_sales_overview(session)
+    await message.answer(text, reply_markup=keyboard)
+    await state.set_state(AdminFSM.sales_menu)
+
+
+@router.callback_query(AdminFSM.sales_menu, F.data == "sales_back")
+async def sales_back_to_panel(query: CallbackQuery, state: FSMContext):
+    await query.message.delete()
+    await state.set_state(AdminFSM.panel)
+    await query.answer("به پنل اصلی بازگشتید.")
+
+
+@router.callback_query(AdminFSM.sales_menu, F.data == "sales_back_overview")
+async def sales_back_overview(query: CallbackQuery, state: FSMContext, session: AsyncSession):
+    text, keyboard = await build_sales_overview(session)
+    await query.message.edit_text(text, reply_markup=keyboard)
+    await query.answer()
+
+
+@router.callback_query(AdminFSM.sales_menu, F.data == "sales_manage_plans")
+async def sales_manage_plans(query: CallbackQuery, session: AsyncSession):
+    text, keyboard = await build_plan_management_keyboard(session)
+    await query.message.edit_text(text, reply_markup=keyboard)
+    await query.answer()
+
+
+@router.callback_query(AdminFSM.sales_menu, F.data == "sales_add_plan")
+async def sales_add_plan(query: CallbackQuery, state: FSMContext):
+    await state.update_data(new_plan={})
+    await state.set_state(AdminFSM.await_plan_title)
+    await query.message.edit_text(
+        "عنوان اشتراک جدید را وارد کنید:\nبرای لغو /cancel را بزنید.",
+        reply_markup=None,
+    )
+    await query.answer()
+
+
+def _parse_numeric_value(value: str, *, allow_unlimited: bool = False) -> int | None:
+    normalized = value.strip().replace(",", "")
+    if allow_unlimited and normalized.lower() in {"-1", "نامحدود", "بی نهایت", "unlimited"}:
+        return -1
+    try:
+        return int(normalized)
+    except ValueError:
+        return None
+
+
+@router.message(AdminFSM.await_plan_title)
+async def sales_collect_title(message: types.Message, state: FSMContext):
+    if not message.text:
+        await message.answer("لطفاً عنوان متنی وارد کنید.")
+        return
+    await state.update_data(new_plan={"title": message.text.strip()})
+    await state.set_state(AdminFSM.await_plan_duration)
+    await message.answer("مدت اشتراک را به روز وارد کنید (مثلاً 30).")
+
+
+@router.message(AdminFSM.await_plan_duration)
+async def sales_collect_duration(message: types.Message, state: FSMContext):
+    duration = _parse_numeric_value(message.text or "")
+    if duration is None or duration <= 0:
+        await message.answer("مدت باید یک عدد صحیح بزرگ‌تر از صفر باشد. دوباره تلاش کنید.")
+        return
+    data = await state.get_data()
+    data.setdefault("new_plan", {})["duration_days"] = duration
+    await state.update_data(new_plan=data["new_plan"])
+    await state.set_state(AdminFSM.await_plan_download_limit)
+    await message.answer("سقف دانلود روزانه را وارد کنید. برای نامحدود عدد -1 یا کلمه نامحدود را وارد کنید.")
+
+
+@router.message(AdminFSM.await_plan_download_limit)
+async def sales_collect_download_limit(message: types.Message, state: FSMContext):
+    download_limit = _parse_numeric_value(message.text or "", allow_unlimited=True)
+    if download_limit is None or download_limit < -1:
+        await message.answer("عدد وارد شده معتبر نیست. دوباره تلاش کنید.")
+        return
+    data = await state.get_data()
+    data.setdefault("new_plan", {})["download_limit"] = download_limit
+    await state.update_data(new_plan=data["new_plan"])
+    await state.set_state(AdminFSM.await_plan_encode_limit)
+    await message.answer("سقف انکد روزانه را وارد کنید. مانند قبل می‌توانید -1 برای نامحدود وارد کنید.")
+
+
+@router.message(AdminFSM.await_plan_encode_limit)
+async def sales_collect_encode_limit(message: types.Message, state: FSMContext):
+    encode_limit = _parse_numeric_value(message.text or "", allow_unlimited=True)
+    if encode_limit is None or encode_limit < -1:
+        await message.answer("عدد وارد شده معتبر نیست. دوباره تلاش کنید.")
+        return
+    data = await state.get_data()
+    data.setdefault("new_plan", {})["encode_limit"] = encode_limit
+    await state.update_data(new_plan=data["new_plan"])
+    await state.set_state(AdminFSM.await_plan_price)
+    await message.answer("قیمت اشتراک را به تومان وارد کنید (مثلاً 300000).")
+
+
+@router.message(AdminFSM.await_plan_price)
+async def sales_collect_price(message: types.Message, state: FSMContext, session: AsyncSession):
+    price = _parse_numeric_value(message.text or "")
+    if price is None or price <= 0:
+        await message.answer("قیمت باید یک عدد صحیح بزرگ‌تر از صفر باشد. دوباره تلاش کنید.")
+        return
+
+    data = await state.get_data()
+    plan_data = data.get("new_plan", {})
+    plan_data["price_toman"] = price
+
+    await database.create_subscription_plan(
+        session,
+        title=plan_data.get("title", "اشتراک"),
+        description=None,
+        duration_days=plan_data.get("duration_days", 30),
+        download_limit=plan_data.get("download_limit", -1),
+        encode_limit=plan_data.get("encode_limit", -1),
+        price_toman=plan_data.get("price_toman", price),
+    )
+
+    await state.set_state(AdminFSM.sales_menu)
+    await state.update_data(new_plan={})
+    await message.answer("اشتراک جدید با موفقیت ثبت شد.")
+    text, keyboard = await build_plan_management_keyboard(session)
+    await message.answer(text, reply_markup=keyboard)
+
+
+@router.callback_query(AdminFSM.sales_menu, F.data == "sales_remove_plan")
+async def sales_remove_plan(query: CallbackQuery, session: AsyncSession):
+    plans = await database.list_subscription_plans(session, include_inactive=True)
+    text, keyboard = build_plan_removal_keyboard(plans, empty_text="اشتراکی برای حذف وجود ندارد.")
+    await query.message.edit_text(text, reply_markup=keyboard)
+    await query.answer()
+
+
+@router.callback_query(AdminFSM.sales_menu, F.data.startswith("sales_delete_"))
+async def sales_delete_plan(query: CallbackQuery, session: AsyncSession):
+    try:
+        plan_id = int(query.data.replace("sales_delete_", ""))
+    except ValueError:
+        await query.answer("شناسه اشتراک نامعتبر است.", show_alert=True)
+        return
+
+    deleted = await database.delete_subscription_plan(session, plan_id)
+    if deleted:
+        await query.answer("اشتراک حذف شد.")
+    else:
+        await query.answer("حذف اشتراک با مشکل مواجه شد.", show_alert=True)
+    text, keyboard = await build_plan_management_keyboard(session)
+    await query.message.edit_text(text, reply_markup=keyboard)
+
+
+@router.callback_query(AdminFSM.sales_menu, F.data == "sales_manage_api")
+async def sales_manage_api(query: CallbackQuery, session: AsyncSession):
+    api_key = await database.get_payment_setting(session, "nowpayments_api_key")
+    text = f"کلید فعلی: {mask_api_key(api_key)}"
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="ثبت / تغییر API Key", callback_data="sales_set_api")],
+            [InlineKeyboardButton(text="حذف API Key", callback_data="sales_clear_api")],
+            [InlineKeyboardButton(text="🔙 بازگشت", callback_data="sales_back_overview")],
+        ]
+    )
+    await query.message.edit_text(text, reply_markup=keyboard)
+    await query.answer()
+
+
+@router.callback_query(AdminFSM.sales_menu, F.data == "sales_set_api")
+async def sales_set_api(query: CallbackQuery, state: FSMContext):
+    await state.set_state(AdminFSM.await_api_key)
+    await query.message.edit_text("API Key جدید NowPayments را ارسال کنید. برای لغو /cancel را بزنید.")
+    await query.answer()
+
+
+@router.message(AdminFSM.await_api_key)
+async def sales_receive_api_key(message: types.Message, state: FSMContext, session: AsyncSession):
+    api_key = (message.text or "").strip()
+    if not api_key:
+        await message.answer("API Key نمی‌تواند خالی باشد. دوباره تلاش کنید یا /cancel را بزنید.")
+        return
+
+    await database.set_payment_setting(session, "nowpayments_api_key", api_key)
+    await state.set_state(AdminFSM.sales_menu)
+    text, keyboard = await build_sales_overview(session)
+    await message.answer("API Key با موفقیت ذخیره شد.")
+    await message.answer(text, reply_markup=keyboard)
+
+
+@router.callback_query(AdminFSM.sales_menu, F.data == "sales_clear_api")
+async def sales_clear_api(query: CallbackQuery, session: AsyncSession):
+    await database.clear_payment_setting(session, "nowpayments_api_key")
+    text, keyboard = await build_sales_overview(session)
+    await query.message.edit_text("API Key حذف شد.")
+    await query.message.answer(text, reply_markup=keyboard)
+    await query.answer("API Key حذف شد.")
 
 @router.message(AdminFSM.panel, F.text == "⚙️ مدیریت اشتراک")
 async def ask_for_user_id(message: types.Message, state: FSMContext):
@@ -283,4 +559,14 @@ async def admin_exit(message: types.Message, state: FSMContext, session: AsyncSe
     # Call the start handler to show the user panel
     await handle_start(message, session)
 # --- END OF CORRECTION ---
+
+
+@router.message(F.text == "/cancel")
+async def admin_cancel(message: types.Message, state: FSMContext):
+    current_state = await state.get_state()
+    if current_state is None or current_state == AdminFSM.panel.state:
+        await message.answer("هیچ عملیات فعالی برای لغو وجود ندارد.")
+        return
+    await state.set_state(AdminFSM.panel)
+    await message.answer("عملیات لغو شد.", reply_markup=get_admin_panel_keyboard())
 

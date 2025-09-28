@@ -62,6 +62,12 @@ class User(Base):
         cascade="all, delete-orphan",
         order_by="TaskUsage.id",
     )
+    payments = relationship(
+        "PaymentTransaction",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        order_by="PaymentTransaction.id",
+    )
 
 
 class Thumbnail(Base):
@@ -148,3 +154,48 @@ class TaskUsage(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
     user = relationship("User", back_populates="task_usage")
+
+
+class SubscriptionPlan(Base):
+    __tablename__ = "subscription_plans"
+    __table_args__ = {"schema": "public"}
+
+    id = Column(Integer, primary_key=True)
+    title = Column(String, nullable=False)
+    description = Column(String, nullable=True)
+    duration_days = Column(Integer, nullable=False)
+    download_limit = Column(Integer, nullable=False)
+    encode_limit = Column(Integer, nullable=False)
+    price_toman = Column(Integer, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    payments = relationship("PaymentTransaction", back_populates="plan")
+
+
+class PaymentSetting(Base):
+    __tablename__ = "payment_settings"
+    __table_args__ = {"schema": "public"}
+
+    key = Column(String, primary_key=True)
+    value = Column(String, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+
+class PaymentTransaction(Base):
+    __tablename__ = "payment_transactions"
+    __table_args__ = {"schema": "public"}
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(BigInteger, ForeignKey("public.users.id"), nullable=False, index=True)
+    plan_id = Column(Integer, ForeignKey("public.subscription_plans.id"), nullable=False)
+    payment_id = Column(String, unique=True, nullable=False)
+    invoice_url = Column(String, nullable=False)
+    pay_amount = Column(String, nullable=False)
+    pay_currency = Column(String, nullable=False)
+    status = Column(String, default="waiting", nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    user = relationship("User", back_populates="payments")
+    plan = relationship("SubscriptionPlan", back_populates="payments")
