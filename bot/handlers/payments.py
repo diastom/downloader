@@ -25,6 +25,77 @@ STATUS_SUCCESS = {"finished", "confirmed", "completed", "paid"}
 STATUS_FAILED = {"failed", "expired", "refunded", "partially_refunded"}
 CHECK_INTERVAL_SECONDS = 20
 MAX_STATUS_CHECKS = 45  # ~15 minutes
+INVOICE_CHECK_DELAY_SECONDS = 45
+
+invoices_to_check: list[dict[str, str]] = []
+
+
+def _add_invoice_to_checklist(invoice_id: str, invoice_url: str) -> None:
+    for entry in invoices_to_check:
+        if entry["invoice_id"] == invoice_id:
+            return
+    invoices_to_check.append({"invoice_id": invoice_id, "invoice_url": invoice_url})
+
+
+def _remove_invoice_from_checklist(invoice_id: str) -> None:
+    for index, entry in enumerate(invoices_to_check):
+        if entry["invoice_id"] == invoice_id:
+            invoices_to_check.pop(index)
+            break
+
+
+def _is_invoice_in_checklist(invoice_id: str) -> bool:
+    return any(entry["invoice_id"] == invoice_id for entry in invoices_to_check)
+
+
+async def _process_invoice_status(
+    *,
+    bot: Bot,
+    user_id: int,
+    plan_id: int,
+    invoice_id: str,
+    status: str,
+) -> bool:
+    normalized_status = status.lower()
+
+    async with AsyncSessionLocal() as new_session:
+        await database.update_payment_transaction_status(
+            new_session,
+            payment_id=invoice_id,
+            status=status,
+        )
+
+        if normalized_status in STATUS_SUCCESS:
+            plan = await database.get_subscription_plan(new_session, plan_id)
+            if not plan:
+                await bot.send_message(
+                    user_id,
+                    "پلن خریداری‌شده دیگر وجود ندارد. لطفاً با پشتیبانی تماس بگیرید.",
+                )
+                _remove_invoice_from_checklist(invoice_id)
+                return True
+
+            user = await database.apply_subscription_plan(new_session, user_id=user_id, plan=plan)
+            await bot.send_message(
+                user_id,
+                (
+                    "پرداخت شما با موفقیت تأیید شد.\n"
+                    "اشتراک شما فعال شد.\n"
+                    f"تاریخ انقضا: {user.sub_expiry_date:%Y-%m-%d}"
+                ),
+            )
+            _remove_invoice_from_checklist(invoice_id)
+            return True
+
+        if normalized_status in STATUS_FAILED:
+            await bot.send_message(
+                user_id,
+                "پرداخت ناموفق بود یا منقضی شده است. در صورت کسر وجه، با پشتیبانی تماس بگیرید.",
+            )
+            _remove_invoice_from_checklist(invoice_id)
+            return True
+
+    return False
 
 
 def _format_plan_description(plan, *, crypto_amount: float) -> str:
@@ -82,6 +153,9 @@ async def _poll_invoice_status(*, bot: Bot, invoice_id: str, user_id: int, plan_
         await asyncio.sleep(CHECK_INTERVAL_SECONDS)
         attempts += 1
 
+        if not _is_invoice_in_checklist(invoice_id):
+            return
+
         try:
             invoice_info = await get_nowpayments_payment_status(api_key=api_key, payment_id=invoice_id)
         except HTTPError as exc:
@@ -102,36 +176,15 @@ async def _poll_invoice_status(*, bot: Bot, invoice_id: str, user_id: int, plan_
         if not status:
             continue
 
-        async with AsyncSessionLocal() as new_session:
-            await database.update_payment_transaction_status(
-                new_session,
-                payment_id=invoice_id,
-                status=status,
-            )
-
-            if status.lower() in STATUS_SUCCESS:
-                plan = await database.get_subscription_plan(new_session, plan_id)
-                if not plan:
-                    await bot.send_message(user_id, "پلن خریداری‌شده دیگر وجود ندارد. لطفاً با پشتیبانی تماس بگیرید.")
-                    return
-
-                user = await database.apply_subscription_plan(new_session, user_id=user_id, plan=plan)
-                await bot.send_message(
-                    user_id,
-                    (
-                        "پرداخت شما با موفقیت تأیید شد.\n"
-                        "اشتراک شما فعال شد.\n"
-                        f"تاریخ انقضا: {user.sub_expiry_date:%Y-%m-%d}"
-                    ),
-                )
-                return
-
-            if status.lower() in STATUS_FAILED:
-                await bot.send_message(
-                    user_id,
-                    "پرداخت ناموفق بود یا منقضی شده است. در صورت کسر وجه، با پشتیبانی تماس بگیرید.",
-                )
-                return
+        handled = await _process_invoice_status(
+            bot=bot,
+            user_id=user_id,
+            plan_id=plan_id,
+            invoice_id=invoice_id,
+            status=status,
+        )
+        if handled:
+            return
 
     # Timed out
     async with AsyncSessionLocal() as new_session:
@@ -140,10 +193,55 @@ async def _poll_invoice_status(*, bot: Bot, invoice_id: str, user_id: int, plan_
             payment_id=invoice_id,
             status="timeout",
         )
+    _remove_invoice_from_checklist(invoice_id)
     await bot.send_message(
         user_id,
         "وضعیت پرداخت طی زمان مقرر مشخص نشد. لطفاً در صورت انجام پرداخت با پشتیبانی تماس بگیرید.",
     )
+
+
+async def _delayed_invoice_check(
+    *,
+    bot: Bot,
+    invoice_id: str,
+    user_id: int,
+    plan_id: int,
+    api_key: str,
+) -> None:
+    await asyncio.sleep(INVOICE_CHECK_DELAY_SECONDS)
+
+    if not _is_invoice_in_checklist(invoice_id):
+        return
+
+    try:
+        invoice_info = await get_nowpayments_payment_status(api_key=api_key, payment_id=invoice_id)
+    except HTTPError as exc:
+        if exc.response is not None and exc.response.status_code == 404:
+            logger.debug("Delayed payment check could not find %s yet", invoice_id)
+            return
+        logger.warning("Delayed payment check failed for %s: %s", invoice_id, exc)
+        return
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Delayed payment check failed for %s: %s", invoice_id, exc)
+        return
+
+    status = (
+        invoice_info.get("status")
+        or invoice_info.get("invoice_status")
+        or invoice_info.get("payment_status")
+    )
+    if not status:
+        return
+
+    handled = await _process_invoice_status(
+        bot=bot,
+        user_id=user_id,
+        plan_id=plan_id,
+        invoice_id=invoice_id,
+        status=status,
+    )
+    if not handled:
+        logger.debug("Delayed payment check for %s returned non-final status %s", invoice_id, status)
 
 
 @router.callback_query(F.data.startswith("buy_plan_"))
@@ -211,6 +309,8 @@ async def handle_plan_purchase(query: CallbackQuery, session: AsyncSession):
         pay_currency=pay_currency,
     )
 
+    _add_invoice_to_checklist(invoice_id, invoice_url)
+
     text = (
         "برای تکمیل خرید روی لینک زیر کلیک کنید و مبلغ را پرداخت نمایید:\n"
         f"لینک پرداخت: {invoice_url}\n"
@@ -220,6 +320,16 @@ async def handle_plan_purchase(query: CallbackQuery, session: AsyncSession):
 
     asyncio.create_task(
         _poll_invoice_status(
+            bot=query.message.bot,
+            invoice_id=invoice_id,
+            user_id=query.from_user.id,
+            plan_id=plan.id,
+            api_key=api_key,
+        )
+    )
+
+    asyncio.create_task(
+        _delayed_invoice_check(
             bot=query.message.bot,
             invoice_id=invoice_id,
             user_id=query.from_user.id,
