@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from decimal import Decimal
 
 from sqlalchemy import func, select
@@ -12,6 +13,23 @@ from config import settings
 from utils.helpers import ALL_SUPPORTED_SITES
 
 logger = logging.getLogger(__name__)
+
+TEHRAN_TZ = ZoneInfo("Asia/Tehran")
+UTC_TZ = ZoneInfo("UTC")
+
+
+def _get_tehran_day_start_utc(reference_time: datetime | None = None) -> datetime:
+    """Returns the UTC timestamp corresponding to midnight in Tehran time."""
+    if reference_time is None:
+        current_utc = datetime.now(UTC_TZ)
+    elif reference_time.tzinfo is None:
+        current_utc = reference_time.replace(tzinfo=UTC_TZ)
+    else:
+        current_utc = reference_time.astimezone(UTC_TZ)
+
+    tehran_now = current_utc.astimezone(TEHRAN_TZ)
+    tehran_midnight = tehran_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    return tehran_midnight.astimezone(UTC_TZ).replace(tzinfo=None)
 
 # --- User ---
 async def get_or_create_user(session: AsyncSession, user_id: int, username: str | None = None) -> models.User:
@@ -80,7 +98,7 @@ async def get_user_daily_task_count(
 ) -> int:
     """Returns the number of tasks the user has started today."""
     now = datetime.utcnow()
-    today_start = datetime(now.year, now.month, now.day)
+    today_start = _get_tehran_day_start_utc(now)
     stmt = (
         select(func.count(models.TaskUsage.id))
         .where(
@@ -189,8 +207,6 @@ async def create_subscription_plan(
     duration_days: int,
     download_limit_per_day: int,
     encode_limit_per_day: int,
-    download_limit: int = -1,
-    encode_limit: int = -1,
     price_toman: int,
     description: str | None = None,
 ) -> models.SubscriptionPlan:
@@ -199,8 +215,8 @@ async def create_subscription_plan(
         duration_days=max(1, duration_days),
         download_limit_per_day=download_limit_per_day,
         encode_limit_per_day=encode_limit_per_day,
-        download_limit=download_limit,
-        encode_limit=encode_limit,
+        download_limit=-1,
+        encode_limit=-1,
         price_toman=price_toman,
         description=description,
     )
@@ -564,7 +580,7 @@ async def record_download_event(
 async def get_bot_statistics(session: AsyncSession) -> dict:
     """Aggregates bot-wide statistics for the admin dashboard."""
     now = datetime.utcnow()
-    today_start = datetime(now.year, now.month, now.day)
+    today_start = _get_tehran_day_start_utc(now)
 
     total_users = await session.scalar(select(func.count(models.User.id))) or 0
     users_today = (

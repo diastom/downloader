@@ -13,6 +13,7 @@ from aiogram.types import (
 from sqlalchemy.ext.asyncio import AsyncSession
 from utils import database, payments
 from decimal import Decimal
+from datetime import datetime
 
 router = Router()
 
@@ -53,6 +54,46 @@ def _format_decimal(amount: Decimal) -> str:
     if "." in text:
         text = text.rstrip("0").rstrip(".")
     return text
+
+
+def _user_has_active_subscription(user) -> bool:
+    if not user.sub_is_active:
+        return False
+    if user.sub_expiry_date is None:
+        return True
+    return user.sub_expiry_date >= datetime.utcnow()
+
+
+def _format_remaining_days(user) -> str:
+    if user.sub_expiry_date is None:
+        return "نامحدود"
+    remaining = user.sub_expiry_date - datetime.utcnow()
+    days_left = max(0, remaining.days)
+    return f"{days_left:02d}"
+
+
+async def _build_active_subscription_response(bot, user) -> tuple[str, InlineKeyboardMarkup]:
+    bot_username = "@Bot"
+    try:
+        bot_user = await bot.get_me()
+        if bot_user.username:
+            bot_username = f"@{bot_user.username}"
+    except Exception:
+        pass
+
+    message_text = (
+        "شما یک اشتراک فعال دارید!\n\n"
+        f"روزهای باقی ماند: {_format_remaining_days(user)}\n"
+        f"سقف دانلود روزانه: {_format_limit(user.sub_download_limit)}\n"
+        f"سقف انکد روزانه: {_format_limit(user.sub_encode_limit)}\n\n"
+        f"{bot_username}"
+    )
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="بروزرسانی وضعیت", callback_data="buy_refresh")]]
+    )
+
+    return message_text, keyboard
 
 @router.message(CommandStart())
 async def handle_start(message: types.Message, state: FSMContext, session: AsyncSession):
@@ -100,6 +141,14 @@ async def handle_help(message: types.Message, session: AsyncSession):
 
 @router.message(Command("buy"))
 async def handle_buy_command(message: types.Message, state: FSMContext, session: AsyncSession):
+    user = await database.get_or_create_user(
+        session, user_id=message.from_user.id, username=message.from_user.username
+    )
+    if _user_has_active_subscription(user):
+        text, keyboard = await _build_active_subscription_response(message.bot, user)
+        await message.answer(text, reply_markup=keyboard)
+        return
+
     plans = await database.get_subscription_plans(session)
     if not plans:
         await message.answer("در حال حاضر هیچ اشتراکی برای فروش تعریف نشده است.")
@@ -167,8 +216,6 @@ async def handle_buy_plan_selection(query: types.CallbackQuery, state: FSMContex
         f"مدت اشتراک: {plan.duration_days} روز\n"
         f"سقف دانلود روزانه: {_format_limit(plan.download_limit_per_day)}\n"
         f"سقف انکد روزانه: {_format_limit(plan.encode_limit_per_day)}\n"
-        f"سقف دانلود کلی: {_format_limit(plan.download_limit)}\n"
-        f"سقف انکد کلی: {_format_limit(plan.encode_limit)}\n"
         f"قیمت: {plan.price_toman:,} تومان\n\n"
         "ارز موردنظر برای پرداخت را انتخاب کنید:"
     )
@@ -322,6 +369,23 @@ async def receive_transaction_link(message: types.Message, state: FSMContext, se
     )
     await state.clear()
     await state.set_state(UserFlow.main_menu)
+
+
+@router.callback_query(F.data == "buy_refresh")
+async def refresh_subscription_status(query: types.CallbackQuery, session: AsyncSession):
+    await query.answer("وضعیت بروزرسانی شد.")
+    user = await database.get_or_create_user(
+        session, user_id=query.from_user.id, username=query.from_user.username
+    )
+
+    if not _user_has_active_subscription(user):
+        await query.message.edit_text(
+            "اشتراک شما منقضی شده یا فعال نیست. برای خرید جدید /buy را ارسال کنید."
+        )
+        return
+
+    text, keyboard = await _build_active_subscription_response(query.message.bot, user)
+    await query.message.edit_text(text, reply_markup=keyboard)
 
 @router.message(Command("cancel"))
 async def handle_cancel(message: types.Message, state: FSMContext):
