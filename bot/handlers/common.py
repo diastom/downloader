@@ -1,4 +1,5 @@
 from aiogram import Router, types, F
+from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -136,7 +137,7 @@ async def handle_help(message: types.Message, session: AsyncSession):
     Handler for the /help command. Displays the help text.
     """
     help_text = await database.get_text(session, key="help_text", default="متن راهنما هنوز تنظیم نشده است.")
-    await message.answer(help_text)
+    await message.answer(help_text, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 
 
 @router.message(Command("buy"))

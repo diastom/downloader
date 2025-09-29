@@ -544,7 +544,8 @@ async def texts_panel_callback(query: types.CallbackQuery, state: FSMContext):
 
 @router.message(AdminFSM.await_help_text)
 async def await_help_text_handler(message: types.Message, state: FSMContext, session: AsyncSession):
-    await database.set_text(session, key="help_text", value=message.text)
+    stored_text = message.html_text if message.html_text is not None else message.text
+    await database.set_text(session, key="help_text", value=stored_text)
     await message.answer("✅ Help text updated successfully.")
     await state.set_state(AdminFSM.panel)
 
