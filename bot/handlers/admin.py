@@ -168,11 +168,17 @@ async def get_subscription_panel(session: AsyncSession, target_user_id: int) -> 
 # --- Handlers ---
 @router.message(Command("admin"))
 async def admin_panel_entry(message: types.Message, state: FSMContext):
+    await state.set_state(AdminFSM.panel)
     await message.answer("Welcome to the Admin Panel.", reply_markup=get_admin_panel_keyboard())
+
+
+async def _return_to_panel(state: FSMContext) -> None:
+    """Helper to ensure the FSM is returned to the main panel state."""
     await state.set_state(AdminFSM.panel)
 
-@router.message(AdminFSM.panel, F.text == "📊 آمار")
-async def show_stats(message: types.Message, session: AsyncSession):
+@router.message(F.text == "📊 آمار")
+async def show_stats(message: types.Message, state: FSMContext, session: AsyncSession):
+    await _return_to_panel(state)
     stats = await database.get_bot_statistics(session)
 
     def fmt_count(value: int) -> str:
@@ -206,13 +212,13 @@ async def show_stats(message: types.Message, session: AsyncSession):
 
     await message.answer(stats_text)
 
-@router.message(AdminFSM.panel, F.text == "⚙️ مدیریت اشتراک")
+@router.message(F.text == "⚙️ مدیریت اشتراک")
 async def ask_for_user_id(message: types.Message, state: FSMContext):
-    await message.answer("Please enter the User ID (UID) to manage:")
     await state.set_state(AdminFSM.await_sub_user_id)
+    await message.answer("Please enter the User ID (UID) to manage:")
 
 
-@router.message(AdminFSM.panel, F.text == "تنظیمات فروش")
+@router.message(F.text == "تنظیمات فروش")
 async def open_sales_menu(message: types.Message, state: FSMContext):
     await state.set_state(AdminFSM.sales_menu)
     await message.answer(
@@ -510,7 +516,7 @@ async def handle_sub_management_callback(query: CallbackQuery, state: FSMContext
     info_text, keyboard = await get_subscription_panel(session, target_user_id)
     await query.message.edit_text(info_text, reply_markup=keyboard, parse_mode="Markdown")
 
-@router.message(AdminFSM.panel, F.text == "📢 همگانی")
+@router.message(F.text == "📢 همگانی")
 async def broadcast_entry(message: types.Message, state: FSMContext):
     await message.answer("Please send the message you want to broadcast to all users. To cancel, type /cancel.")
     await state.set_state(AdminFSM.await_broadcast)
@@ -532,8 +538,9 @@ async def process_broadcast(message: types.Message, state: FSMContext, session: 
     await status_msg.edit_text(f"✅ Broadcast sent to {sent_count} users.\n❌ Failed for {failed_count} users.")
     await state.set_state(AdminFSM.panel)
 
-@router.message(AdminFSM.panel, F.text == "📝 متن ها")
-async def texts_panel_command(message: types.Message):
+@router.message(F.text == "📝 متن ها")
+async def texts_panel_command(message: types.Message, state: FSMContext):
+    await _return_to_panel(state)
     keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="Edit Help Text", callback_data="texts_edit_help")]])
     await message.answer("Which text do you want to edit?", reply_markup=keyboard)
 
@@ -550,7 +557,7 @@ async def await_help_text_handler(message: types.Message, state: FSMContext, ses
     await state.set_state(AdminFSM.panel)
 
 # --- START OF CORRECTION ---
-@router.message(AdminFSM.panel, F.text == "❌ خروج از پنل")
+@router.message(F.text == "❌ خروج از پنل")
 async def admin_exit(message: types.Message, state: FSMContext, session: AsyncSession):
     """Handles exiting the admin panel and shows the main user panel."""
     await message.answer("You have exited the Admin Panel.", reply_markup=ReplyKeyboardRemove())
