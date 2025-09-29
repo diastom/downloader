@@ -33,11 +33,10 @@ async def get_encode_panel(state: FSMContext) -> tuple[str, InlineKeyboardMarkup
     quality_text = f"{selected_quality}p" if selected_quality != 'original' else "Original"
 
     panel_lines = [
-        "🎬 پنل تنظیمات انکد",
-        "────────────────────",
-        f"• نام فایل: `{data.get('filename')}`",
-        f"• حجم تقریبی: `{size_mb:.2f} MB`",
-        f"• کیفیت خروجی: `{quality_text}`",
+        "🎬 تغییرات مد نظر خود را اعمال کنید",
+        f"• نام فایل {data.get('filename')}",
+        f"• حجم تقریبی {size_mb:.2f} مگابایت",
+        f"• کیفیت خروجی {quality_text}",
     ]
 
     if options.get("thumb"):
@@ -50,10 +49,7 @@ async def get_encode_panel(state: FSMContext) -> tuple[str, InlineKeyboardMarkup
     if options.get("water") and options.get("watermark_name"):
         panel_lines.append(f"💧 واترمارک انتخاب شده: {options['watermark_name']}")
 
-    panel_lines.append("")
-    panel_lines.append(
-        "با دکمه‌های زیر می‌توانید هر گزینه را فعال یا غیرفعال کنید و در پایان «شروع عملیات» را بزنید."
-    )
+    panel_lines.extend(["", "در پایان «شروع عملیات» را بزنید."])
 
     rename_check = "✅" if options.get("rename") else "❌"
     thumb_check = "✅" if options.get("thumb") else "❌"
