@@ -129,15 +129,24 @@ def encode_video_task(user_id: int, username: str, chat_id: int, video_file_id: 
             await bot.edit_message_text("📤 در حال آپلود ویدیوی نهایی...", chat_id=chat_id, message_id=status_message.message_id)
             duration, width, height = await asyncio.to_thread(video_processor.get_video_metadata, str(final_video_path))
 
-            await bot.send_video(
-                chat_id=chat_id,
-                video=FSInputFile(str(final_video_path)),
-                thumbnail=FSInputFile(str(custom_thumb_path)) if custom_thumb_path and custom_thumb_path.exists() else None,
-                duration=duration,
-                width=width,
-                height=height,
-                supports_streaming=True,
-            )
+            delivery_mode = options.get("delivery_mode", "media")
+
+            if delivery_mode == "file":
+                await bot.send_document(
+                    chat_id=chat_id,
+                    document=FSInputFile(str(final_video_path)),
+                    thumbnail=FSInputFile(str(custom_thumb_path)) if custom_thumb_path and custom_thumb_path.exists() else None,
+                )
+            else:
+                await bot.send_video(
+                    chat_id=chat_id,
+                    video=FSInputFile(str(final_video_path)),
+                    thumbnail=FSInputFile(str(custom_thumb_path)) if custom_thumb_path and custom_thumb_path.exists() else None,
+                    duration=duration,
+                    width=width,
+                    height=height,
+                    supports_streaming=True,
+                )
             await bot.send_message(
                 chat_id=chat_id,
                 text="تسک شما انجام شد✅",

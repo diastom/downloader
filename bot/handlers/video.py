@@ -31,12 +31,15 @@ async def get_encode_panel(state: FSMContext) -> tuple[str, InlineKeyboardMarkup
 
     selected_quality = options.get('selected_quality', 'original')
     quality_text = f"{selected_quality}p" if selected_quality != 'original' else "Original"
+    delivery_mode = options.get('delivery_mode', 'media')
+    delivery_text = "مدیا" if delivery_mode == 'media' else "فایل"
 
     panel_lines = [
         "🎬 تغییرات مد نظر خود را اعمال کنید",
         f"• نام فایل {data.get('filename')}",
         f"• حجم تقریبی {size_mb:.2f} مگابایت",
         f"• کیفیت خروجی {quality_text}",
+        f"• دریافت به صورت {delivery_text}",
     ]
 
     if options.get("thumb"):
@@ -61,6 +64,7 @@ async def get_encode_panel(state: FSMContext) -> tuple[str, InlineKeyboardMarkup
             InlineKeyboardButton(text=f"اعمال تامبنیل {thumb_check}", callback_data="enc_toggle_thumb")
         ],
         [InlineKeyboardButton(text=f"اعمال واترمارک {water_check}", callback_data="enc_toggle_water")],
+        [InlineKeyboardButton(text=f"دریافت به صورت : {delivery_text}", callback_data="enc_toggle_delivery")],
         [InlineKeyboardButton(text="🌇 انتخاب کیفیت", callback_data="enc_select_quality")],
         [InlineKeyboardButton(text="🚀 شروع عملیات", callback_data="enc_start")],
         [InlineKeyboardButton(text="انصراف ❌", callback_data="enc_cancel")]
@@ -119,7 +123,7 @@ async def _enter_encode_panel(message: types.Message, state: FSMContext):
         "original_filename": message.video.file_name or "video.mp4",
         "filename": message.video.file_name or "video.mp4",
         "file_size": message.video.file_size,
-        "options": {"rename": False, "thumb": False, "water": False}
+        "options": {"rename": False, "thumb": False, "water": False, "delivery_mode": "media"}
     }
     await state.update_data(**initial_data)
     panel_text, keyboard = await get_encode_panel(state)
@@ -144,6 +148,19 @@ async def handle_toggle_option(query: types.CallbackQuery, state: FSMContext, se
     action = query.data.replace("enc_toggle_", "")
     user_id = query.from_user.id
 
+    data = await state.get_data()
+    options = data.get("options", {})
+
+    if action == "delivery":
+        current_mode = options.get("delivery_mode", "media")
+        new_mode = "file" if current_mode == "media" else "media"
+        options["delivery_mode"] = new_mode
+        await state.update_data(options=options)
+        panel_text, keyboard = await get_encode_panel(state)
+        await query.message.edit_text(panel_text, reply_markup=keyboard)
+        await query.answer(f"حالت دریافت روی {'فایل' if new_mode == 'file' else 'مدیا'} تنظیم شد.")
+        return
+
     # Check for subscription access before allowing the toggle
     if action == "thumb":
         if not await database.has_feature_access(session, user_id, 'thumbnail'):
@@ -154,8 +171,6 @@ async def handle_toggle_option(query: types.CallbackQuery, state: FSMContext, se
             await query.answer("اشتراک شما شامل قابلیت واترمارک نمی‌شود.", show_alert=True)
             return
 
-    data = await state.get_data()
-    options = data.get("options", {})
     options[action] = not options.get(action, False)
 
     if action == "thumb":
