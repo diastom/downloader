@@ -13,10 +13,13 @@ from aiogram.types import (
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from utils import database, payments
+from utils.helpers import ALL_SUPPORTED_SITES
 from decimal import Decimal
 from datetime import datetime
 
 router = Router()
+
+SUPPORTED_SITES = [site for category in ALL_SUPPORTED_SITES.values() for site in category]
 
 # --- States for the main user flow ---
 class UserFlow(StatesGroup):
@@ -56,6 +59,25 @@ def _format_decimal(amount: Decimal) -> str:
         text = text.rstrip("0").rstrip(".")
     return text
 
+def _get_plan_sites(plan) -> list[str]:
+    allowed = set(getattr(plan, "allowed_sites", []) or [])
+    return [site for site in SUPPORTED_SITES if site in allowed]
+
+def _get_plan_sites_lines(plan) -> list[str]:
+    sites = _get_plan_sites(plan)
+    return sites if sites else ["بدون دسترسی به سایت‌های ویژه"]
+
+def _get_plan_feature_labels(plan) -> list[str]:
+    labels = []
+    if getattr(plan, "allow_thumbnail", False):
+        labels.append("تامبنیل")
+    if getattr(plan, "allow_watermark", False):
+        labels.append("واترمارک")
+    return labels
+
+def _get_plan_feature_text(plan) -> str:
+    labels = _get_plan_feature_labels(plan)
+    return " + ".join(labels) if labels else "ندارد"
 
 def _user_has_active_subscription(user) -> bool:
     if not user.sub_is_active:
@@ -164,15 +186,20 @@ async def handle_buy_command(message: types.Message, state: FSMContext, session:
     lines = ["پلن‌های موجود:"]
     buttons = []
     for plan in plans:
-        lines.append(
-            f"• {plan.name} | مدت: {plan.duration_days} روز | قیمت: {plan.price_toman:,} تومان"
-        )
+        plan_lines = [
+            f"• {plan.name} | مدت: {plan.duration_days} روز | قیمت: {plan.price_toman:,} تومان",
+            "سایت‌های فعال:",
+        ]
+        plan_lines.extend(_get_plan_sites_lines(plan))
+        plan_lines.append(f"امکانات: {_get_plan_feature_text(plan)}")
+        lines.append("\n".join(plan_lines))
+        lines.append("")
         buttons.append([InlineKeyboardButton(text=f"انتخاب {plan.name}", callback_data=f"buy_plan_{plan.id}")])
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
     await state.set_state(PurchaseFlow.select_plan)
     await state.update_data(purchase_context={})
-    await message.answer("\n".join(lines), reply_markup=keyboard)
+    await message.answer("\n".join(lines).strip(), reply_markup=keyboard)
 
 
 @router.callback_query(F.data == "buy_cancel")
@@ -215,11 +242,15 @@ async def handle_buy_plan_selection(query: types.CallbackQuery, state: FSMContex
     currency_buttons.append([InlineKeyboardButton(text="لغو", callback_data="buy_cancel")])
     keyboard = InlineKeyboardMarkup(inline_keyboard=currency_buttons)
 
+    site_lines = "\n".join(_get_plan_sites_lines(plan))
+    feature_text = _get_plan_feature_text(plan)
     summary = (
         f"اشتراک انتخابی: {plan.name}\n"
         f"مدت اشتراک: {plan.duration_days} روز\n"
         f"سقف دانلود روزانه: {_format_limit(plan.download_limit_per_day)}\n"
         f"سقف انکد روزانه: {_format_limit(plan.encode_limit_per_day)}\n"
+        f"سایت‌های فعال:\n{site_lines}\n"
+        f"امکانات: {feature_text}\n"
         f"قیمت: {plan.price_toman:,} تومان\n\n"
         "ارز موردنظر برای پرداخت را انتخاب کنید:"
     )
@@ -273,11 +304,15 @@ async def handle_buy_currency_selection(query: types.CallbackQuery, state: FSMCo
         wallet_address=wallet.address,
     )
 
+    site_lines = "\n".join(_get_plan_sites_lines(plan))
+    feature_text = _get_plan_feature_text(plan)
     instructions = (
         f"🔐 اشتراک: {plan.name}\n"
         f"مدت اشتراک: {plan.duration_days} روز\n"
         f"سقف دانلود روزانه: {_format_limit(plan.download_limit_per_day)}\n"
         f"سقف انکد روزانه: {_format_limit(plan.encode_limit_per_day)}\n"
+        f"سایت‌های فعال:\n{site_lines}\n"
+        f"امکانات: {feature_text}\n"
         f"قیمت: {plan.price_toman:,} تومان\n"
         f"قیمت لحظه‌ای هر {meta.display_name}: {price_toman:,.0f} تومان\n"
         f"مبلغ قابل پرداخت با {meta.display_name}: {_format_decimal(expected_amount)}\n"

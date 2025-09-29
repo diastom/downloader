@@ -43,6 +43,31 @@ async def create_db_tables():
             "WHERE sub_encode_limit IS NULL"
         ))
 
+        await conn.execute(text(
+            "ALTER TABLE IF EXISTS public.subscription_plans "
+            "ADD COLUMN IF NOT EXISTS allowed_sites JSONB DEFAULT '[]'::jsonb"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE IF EXISTS public.subscription_plans "
+            "ADD COLUMN IF NOT EXISTS allow_thumbnail BOOLEAN DEFAULT FALSE"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE IF EXISTS public.subscription_plans "
+            "ADD COLUMN IF NOT EXISTS allow_watermark BOOLEAN DEFAULT FALSE"
+        ))
+        await conn.execute(text(
+            "UPDATE public.subscription_plans SET allowed_sites = '[]'::jsonb "
+            "WHERE allowed_sites IS NULL"
+        ))
+        await conn.execute(text(
+            "UPDATE public.subscription_plans SET allow_thumbnail = FALSE "
+            "WHERE allow_thumbnail IS NULL"
+        ))
+        await conn.execute(text(
+            "UPDATE public.subscription_plans SET allow_watermark = FALSE "
+            "WHERE allow_watermark IS NULL"
+        ))
+
     print("Tables created successfully.")
     await engine.dispose()
 
