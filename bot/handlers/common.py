@@ -179,7 +179,10 @@ async def handle_buy_command(message: types.Message, state: FSMContext, session:
 async def handle_buy_cancel(query: types.CallbackQuery, state: FSMContext):
     await state.clear()
     await state.set_state(UserFlow.main_menu)
-    await query.message.answer("فرآیند خرید لغو شد.")
+    try:
+        await query.message.edit_text("فرآیند خرید لغو شد.")
+    except Exception:
+        await query.message.answer("فرآیند خرید لغو شد.")
     await query.answer()
 
 
@@ -223,7 +226,7 @@ async def handle_buy_plan_selection(query: types.CallbackQuery, state: FSMContex
 
     await state.update_data(selected_plan_id=plan.id)
     await state.set_state(PurchaseFlow.select_currency)
-    await query.message.answer(summary, reply_markup=keyboard)
+    await query.message.edit_text(summary, reply_markup=keyboard)
 
 
 @router.callback_query(F.data.startswith("buy_currency_"))
@@ -297,13 +300,23 @@ async def handle_buy_currency_selection(query: types.CallbackQuery, state: FSMCo
         expected_amount=str(expected_amount),
         transaction_id=transaction.id,
     )
-    await query.message.answer(instructions, reply_markup=action_keyboard)
+    await query.message.edit_text(instructions, reply_markup=action_keyboard)
 
 
 @router.callback_query(F.data == "buy_send_link")
 async def prompt_for_transaction_link(query: types.CallbackQuery):
     await query.answer()
-    await query.message.answer("لینک تراکنش خود را ارسال کنید (مطابق با سایت اکسپلورر معرفی‌شده).")
+    current_text = (query.message.text or "").rstrip()
+    prompt = "لطفاً لینک تراکنش خود را ارسال کنید (مطابق با سایت اکسپلورر معرفی‌شده)."
+    if prompt not in current_text:
+        if current_text:
+            current_text = f"{current_text}\n\n{prompt}"
+        else:
+            current_text = prompt
+    action_keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="لغو", callback_data="buy_cancel")]]
+    )
+    await query.message.edit_text(current_text, reply_markup=action_keyboard)
 
 
 @router.message(PurchaseFlow.await_link)
