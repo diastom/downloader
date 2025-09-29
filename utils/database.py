@@ -14,6 +14,8 @@ from utils.helpers import ALL_SUPPORTED_SITES
 
 logger = logging.getLogger(__name__)
 
+SUPPORTED_SITE_LIST = [site for category in ALL_SUPPORTED_SITES.values() for site in category]
+
 TEHRAN_TZ = ZoneInfo("Asia/Tehran")
 UTC_TZ = ZoneInfo("UTC")
 
@@ -209,7 +211,12 @@ async def create_subscription_plan(
     encode_limit_per_day: int,
     price_toman: int,
     description: str | None = None,
+    allowed_sites: list[str] | None = None,
+    allow_thumbnail: bool = False,
+    allow_watermark: bool = False,
 ) -> models.SubscriptionPlan:
+    allowed_set = {site for site in (allowed_sites or []) if site in SUPPORTED_SITE_LIST}
+    normalized_sites = [site for site in SUPPORTED_SITE_LIST if site in allowed_set]
     plan = models.SubscriptionPlan(
         name=name,
         duration_days=max(1, duration_days),
@@ -217,6 +224,9 @@ async def create_subscription_plan(
         encode_limit_per_day=encode_limit_per_day,
         download_limit=-1,
         encode_limit=-1,
+        allowed_sites=normalized_sites,
+        allow_thumbnail=allow_thumbnail,
+        allow_watermark=allow_watermark,
         price_toman=price_toman,
         description=description,
     )
@@ -360,8 +370,14 @@ async def apply_subscription_plan_to_user(
     user.sub_expiry_date = base_time + timedelta(days=plan.duration_days)
     user.sub_download_limit = plan.download_limit_per_day if plan.download_limit_per_day >= 0 else -1
     user.sub_encode_limit = plan.encode_limit_per_day if plan.encode_limit_per_day >= 0 else -1
-    user.sub_allowed_sites = {site: True for category in ALL_SUPPORTED_SITES.values() for site in category}
+    allowed_map = {site: False for site in SUPPORTED_SITE_LIST}
+    for site in plan.allowed_sites or []:
+        if site in allowed_map:
+            allowed_map[site] = True
+    user.sub_allowed_sites = allowed_map
     flag_modified(user, "sub_allowed_sites")
+    user.allow_thumbnail = plan.allow_thumbnail
+    user.allow_watermark = plan.allow_watermark
     await session.commit()
     await session.refresh(user)
     return user

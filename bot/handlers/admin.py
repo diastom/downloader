@@ -22,6 +22,8 @@ router = Router()
 router.message.filter(F.from_user.id.in_(settings.admin_ids))
 router.callback_query.filter(F.from_user.id.in_(settings.admin_ids))
 
+SUPPORTED_SITES = [site for category in ALL_SUPPORTED_SITES.values() for site in category]
+
 # --- FSM States ---
 class AdminFSM(StatesGroup):
     panel = State()
@@ -31,6 +33,8 @@ class AdminFSM(StatesGroup):
     await_help_text = State()
     sales_menu = State()
     await_plan_name = State()
+    await_plan_sites = State()
+    await_plan_features = State()
     await_plan_duration = State()
     await_plan_download_limit = State()
     await_plan_encode_limit = State()
@@ -55,6 +59,80 @@ def get_sales_keyboard() -> ReplyKeyboardMarkup:
     ], resize_keyboard=True)
 
 
+def _normalize_allowed_sites(sites: list[str] | set[str]) -> list[str]:
+    selected = {site for site in sites if site in SUPPORTED_SITES}
+    return [site for site in SUPPORTED_SITES if site in selected]
+
+
+def _format_allowed_sites_lines(sites: list[str] | None) -> list[str]:
+    normalized = _normalize_allowed_sites(sites or [])
+    return normalized or ["هیچ سایتی فعال نشده است."]
+
+
+def _format_feature_summary(allow_thumbnail: bool, allow_watermark: bool) -> str:
+    features = []
+    if allow_thumbnail:
+        features.append("تامبنیل")
+    if allow_watermark:
+        features.append("واترمارک")
+    return "، ".join(features) if features else "هیچ‌کدام"
+
+
+def _build_site_selection_text(selected_sites: list[str]) -> str:
+    lines = ["سایت‌های مجاز برای این پلن را انتخاب کنید.", "", "سایت‌های انتخاب‌شده:"]
+    lines.extend(_format_allowed_sites_lines(selected_sites))
+    lines.append("")
+    lines.append("با دکمه‌ها می‌توانید دسترسی هر سایت را تغییر دهید و سپس گزینه «ادامه» را بزنید.")
+    return "\n".join(lines)
+
+
+def _build_site_selection_keyboard(selected_sites: list[str]) -> InlineKeyboardMarkup:
+    selected = set(_normalize_allowed_sites(selected_sites))
+    rows: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+    for site in SUPPORTED_SITES:
+        status = "✅" if site in selected else "❌"
+        row.append(InlineKeyboardButton(text=f"{status} {site}", callback_data=f"sales_plan_site_toggle:{site}"))
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([
+        InlineKeyboardButton(text="انتخاب همه", callback_data="sales_plan_sites_select_all"),
+        InlineKeyboardButton(text="حذف همه", callback_data="sales_plan_sites_clear")
+    ])
+    rows.append([InlineKeyboardButton(text="ادامه ▶️", callback_data="sales_plan_sites_done")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _build_feature_selection_text(allow_thumbnail: bool, allow_watermark: bool) -> str:
+    lines = ["امکانات این پلن را مشخص کنید:",
+             f"تامبنیل: {'فعال' if allow_thumbnail else 'غیرفعال'}",
+             f"واترمارک: {'فعال' if allow_watermark else 'غیرفعال'}",
+             "",
+             "پس از اعمال تغییرات روی «ادامه» بزنید."]
+    return "\n".join(lines)
+
+
+def _build_feature_selection_keyboard(allow_thumbnail: bool, allow_watermark: bool) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text=f"{'✅' if allow_thumbnail else '❌'} تامبنیل", callback_data="sales_plan_feature_toggle:thumbnail"),
+            InlineKeyboardButton(text=f"{'✅' if allow_watermark else '❌'} واترمارک", callback_data="sales_plan_feature_toggle:watermark"),
+        ],
+        [InlineKeyboardButton(text="ادامه ▶️", callback_data="sales_plan_features_done")]
+    ])
+
+
+def _get_site_selection_payload(selected_sites: list[str]) -> tuple[str, InlineKeyboardMarkup]:
+    return _build_site_selection_text(selected_sites), _build_site_selection_keyboard(selected_sites)
+
+
+def _get_feature_selection_payload(allow_thumbnail: bool, allow_watermark: bool) -> tuple[str, InlineKeyboardMarkup]:
+    return _build_feature_selection_text(allow_thumbnail, allow_watermark), _build_feature_selection_keyboard(allow_thumbnail, allow_watermark)
+
+
 def _format_limit_value(value: int) -> str:
     return "نامحدود" if value is None or value < 0 else f"{value}"
 
@@ -66,15 +144,18 @@ async def build_subscription_overview(session: AsyncSession) -> tuple[str, Inlin
     else:
         lines = ["انواع اشتراک‌ها:"]
         for idx, plan in enumerate(plans, start=1):
-            lines.append(
-                (
-                    f"\n{idx}. {plan.name}\n"
-                    f"مدت اشتراک: {plan.duration_days} روز\n"
-                    f"سقف دانلود روزانه: {_format_limit_value(plan.download_limit_per_day)}\n"
-                    f"سقف انکد روزانه: {_format_limit_value(plan.encode_limit_per_day)}\n"
-                    f"قیمت: {plan.price_toman:,} تومان"
-                )
+            site_lines = "\n".join(_format_allowed_sites_lines(getattr(plan, 'allowed_sites', [])))
+            feature_summary = _format_feature_summary(getattr(plan, 'allow_thumbnail', False), getattr(plan, 'allow_watermark', False))
+            plan_text = (
+                f"\n{idx}. {plan.name}\n"
+                f"مدت اشتراک: {plan.duration_days} روز\n"
+                f"سقف دانلود روزانه: {_format_limit_value(plan.download_limit_per_day)}\n"
+                f"سقف انکد روزانه: {_format_limit_value(plan.encode_limit_per_day)}\n"
+                f"قیمت: {plan.price_toman:,} تومان\n"
+                f"سایت‌های فعال:\n{site_lines}\n"
+                f"امکانات: {feature_summary}"
             )
+            lines.append(plan_text)
             if plan.description:
                 lines.append(f"توضیحات: {plan.description}")
         text = "\n".join(lines)
@@ -299,9 +380,112 @@ async def sales_plan_receive_name(message: types.Message, state: FSMContext):
     if not name:
         await message.answer("نام معتبر نیست. دوباره تلاش کنید:")
         return
-    await state.update_data(new_plan={"name": name})
-    await message.answer("مدت اشتراک را به تعداد روز وارد کنید:")
+    plan = {"name": name, "allowed_sites": [], "allow_thumbnail": False, "allow_watermark": False}
+    await state.update_data(new_plan=plan)
+    await state.set_state(AdminFSM.await_plan_sites)
+    text, keyboard = _get_site_selection_payload(plan["allowed_sites"])
+    await message.answer(text, reply_markup=keyboard)
+
+
+@router.callback_query(AdminFSM.await_plan_sites, F.data.startswith("sales_plan_site_toggle:"))
+async def sales_plan_toggle_site(query: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    plan = data.get("new_plan", {})
+    if not plan:
+        await query.answer("اطلاعات پلن یافت نشد.", show_alert=True)
+        return
+    site = query.data.replace("sales_plan_site_toggle:", "")
+    if site not in SUPPORTED_SITES:
+        await query.answer("سایت نامعتبر است.", show_alert=True)
+        return
+    allowed = set(_normalize_allowed_sites(plan.get("allowed_sites", [])))
+    if site in allowed:
+        allowed.remove(site)
+    else:
+        allowed.add(site)
+    plan["allowed_sites"] = [s for s in SUPPORTED_SITES if s in allowed]
+    await state.update_data(new_plan=plan)
+    text, keyboard = _get_site_selection_payload(plan["allowed_sites"])
+    await query.message.edit_text(text, reply_markup=keyboard)
+    await query.answer("دسترسی سایت به‌روزرسانی شد.")
+
+
+@router.callback_query(AdminFSM.await_plan_sites, F.data == "sales_plan_sites_select_all")
+async def sales_plan_sites_select_all(query: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    plan = data.get("new_plan", {})
+    if not plan:
+        await query.answer("اطلاعات پلن یافت نشد.", show_alert=True)
+        return
+    plan["allowed_sites"] = list(SUPPORTED_SITES)
+    await state.update_data(new_plan=plan)
+    text, keyboard = _get_site_selection_payload(plan["allowed_sites"])
+    await query.message.edit_text(text, reply_markup=keyboard)
+    await query.answer("همه سایت‌ها فعال شدند.")
+
+
+@router.callback_query(AdminFSM.await_plan_sites, F.data == "sales_plan_sites_clear")
+async def sales_plan_sites_clear(query: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    plan = data.get("new_plan", {})
+    if not plan:
+        await query.answer("اطلاعات پلن یافت نشد.", show_alert=True)
+        return
+    plan["allowed_sites"] = []
+    await state.update_data(new_plan=plan)
+    text, keyboard = _get_site_selection_payload(plan["allowed_sites"])
+    await query.message.edit_text(text, reply_markup=keyboard)
+    await query.answer("تمام سایت‌ها غیرفعال شدند.")
+
+
+@router.callback_query(AdminFSM.await_plan_sites, F.data == "sales_plan_sites_done")
+async def sales_plan_sites_done(query: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    plan = data.get("new_plan", {})
+    if not plan:
+        await query.answer("اطلاعات پلن یافت نشد.", show_alert=True)
+        return
+    await state.update_data(new_plan=plan)
+    await state.set_state(AdminFSM.await_plan_features)
+    text, keyboard = _get_feature_selection_payload(plan.get("allow_thumbnail", False), plan.get("allow_watermark", False))
+    await query.message.edit_text(text, reply_markup=keyboard)
+    await query.answer()
+
+
+@router.callback_query(AdminFSM.await_plan_features, F.data.startswith("sales_plan_feature_toggle:"))
+async def sales_plan_feature_toggle(query: CallbackQuery, state: FSMContext):
+    feature = query.data.replace("sales_plan_feature_toggle:", "")
+    data = await state.get_data()
+    plan = data.get("new_plan", {})
+    if not plan:
+        await query.answer("اطلاعات پلن یافت نشد.", show_alert=True)
+        return
+    if feature == "thumbnail":
+        plan["allow_thumbnail"] = not plan.get("allow_thumbnail", False)
+        response = "وضعیت تامبنیل تغییر کرد."
+    elif feature == "watermark":
+        plan["allow_watermark"] = not plan.get("allow_watermark", False)
+        response = "وضعیت واترمارک تغییر کرد."
+    else:
+        await query.answer("گزینه نامعتبر است.", show_alert=True)
+        return
+    await state.update_data(new_plan=plan)
+    text, keyboard = _get_feature_selection_payload(plan.get("allow_thumbnail", False), plan.get("allow_watermark", False))
+    await query.message.edit_text(text, reply_markup=keyboard)
+    await query.answer(response)
+
+
+@router.callback_query(AdminFSM.await_plan_features, F.data == "sales_plan_features_done")
+async def sales_plan_features_done(query: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    plan = data.get("new_plan", {})
+    if not plan:
+        await query.answer("اطلاعات پلن یافت نشد.", show_alert=True)
+        return
+    await state.update_data(new_plan=plan)
     await state.set_state(AdminFSM.await_plan_duration)
+    await query.message.edit_text("مدت اشتراک را به تعداد روز وارد کنید:")
+    await query.answer("لطفاً مدت اشتراک را وارد کنید.")
 
 
 @router.message(AdminFSM.await_plan_duration)
