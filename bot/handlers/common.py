@@ -63,7 +63,10 @@ def _get_plan_sites(plan) -> list[str]:
     allowed = set(getattr(plan, "allowed_sites", []) or [])
     return [site for site in SUPPORTED_SITES if site in allowed]
 
-def _get_plan_sites_lines(plan) -> list[str]:
+
+def _get_plan_sites_lines(plan, banner_available: bool = False) -> list[str]:
+    if banner_available:
+        return ["در بنر ذکر شده است"]
     sites = _get_plan_sites(plan)
     return sites if sites else ["بدون دسترسی به سایت‌های ویژه"]
 
@@ -85,6 +88,31 @@ def _user_has_active_subscription(user) -> bool:
     if user.sub_expiry_date is None:
         return True
     return user.sub_expiry_date >= datetime.utcnow()
+
+
+async def _edit_purchase_message(
+    message: types.Message,
+    text: str,
+    reply_markup: InlineKeyboardMarkup | None = None,
+):
+    if message.content_type == "photo" and message.photo:
+        await message.edit_caption(caption=text, reply_markup=reply_markup)
+    else:
+        await message.edit_text(text, reply_markup=reply_markup)
+
+
+async def _get_purchase_banner_info(
+    state: FSMContext,
+    session: AsyncSession,
+) -> tuple[bool, str | None]:
+    data = await state.get_data()
+    context = data.get("purchase_context") or {}
+    file_id = context.get("banner_file_id")
+    if file_id is None:
+        file_id = await database.get_subscription_banner_file_id(session)
+        context["banner_file_id"] = file_id or ""
+        await state.update_data(purchase_context=context)
+    return bool(file_id), (file_id or None)
 
 
 def _format_remaining_days(user) -> str:
@@ -183,6 +211,9 @@ async def handle_buy_command(message: types.Message, state: FSMContext, session:
         await message.answer("متأسفانه هیچ ولتی برای دریافت پرداخت‌ها تنظیم نشده است. لطفاً بعداً تلاش کنید.")
         return
 
+    banner_file_id = await database.get_subscription_banner_file_id(session)
+    banner_available = bool(banner_file_id)
+
     lines = ["پلن‌های موجود:"]
     buttons = []
     for plan in plans:
@@ -190,7 +221,7 @@ async def handle_buy_command(message: types.Message, state: FSMContext, session:
             f"• {plan.name} | مدت: {plan.duration_days} روز | قیمت: {plan.price_toman:,} تومان",
             "سایت‌های فعال:",
         ]
-        plan_lines.extend(_get_plan_sites_lines(plan))
+        plan_lines.extend(_get_plan_sites_lines(plan, banner_available))
         plan_lines.append(f"امکانات: {_get_plan_feature_text(plan)}")
         lines.append("\n".join(plan_lines))
         lines.append("")
@@ -198,8 +229,12 @@ async def handle_buy_command(message: types.Message, state: FSMContext, session:
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
     await state.set_state(PurchaseFlow.select_plan)
-    await state.update_data(purchase_context={})
-    await message.answer("\n".join(lines).strip(), reply_markup=keyboard)
+    await state.update_data(purchase_context={"banner_file_id": banner_file_id or ""})
+    response_text = "\n".join(lines).strip()
+    if banner_file_id:
+        await message.answer_photo(banner_file_id, caption=response_text, reply_markup=keyboard)
+    else:
+        await message.answer(response_text, reply_markup=keyboard)
 
 
 @router.callback_query(F.data == "buy_cancel")
@@ -207,7 +242,7 @@ async def handle_buy_cancel(query: types.CallbackQuery, state: FSMContext):
     await state.clear()
     await state.set_state(UserFlow.main_menu)
     try:
-        await query.message.edit_text("فرآیند خرید لغو شد.")
+        await _edit_purchase_message(query.message, "فرآیند خرید لغو شد.")
     except Exception:
         await query.message.answer("فرآیند خرید لغو شد.")
     await query.answer()
@@ -242,7 +277,8 @@ async def handle_buy_plan_selection(query: types.CallbackQuery, state: FSMContex
     currency_buttons.append([InlineKeyboardButton(text="لغو", callback_data="buy_cancel")])
     keyboard = InlineKeyboardMarkup(inline_keyboard=currency_buttons)
 
-    site_lines = "\n".join(_get_plan_sites_lines(plan))
+    banner_available, _ = await _get_purchase_banner_info(state, session)
+    site_lines = "\n".join(_get_plan_sites_lines(plan, banner_available))
     feature_text = _get_plan_feature_text(plan)
     summary = (
         f"اشتراک انتخابی: {plan.name}\n"
@@ -257,7 +293,7 @@ async def handle_buy_plan_selection(query: types.CallbackQuery, state: FSMContex
 
     await state.update_data(selected_plan_id=plan.id)
     await state.set_state(PurchaseFlow.select_currency)
-    await query.message.edit_text(summary, reply_markup=keyboard)
+    await _edit_purchase_message(query.message, summary, reply_markup=keyboard)
 
 
 @router.callback_query(F.data.startswith("buy_currency_"))
@@ -304,7 +340,8 @@ async def handle_buy_currency_selection(query: types.CallbackQuery, state: FSMCo
         wallet_address=wallet.address,
     )
 
-    site_lines = "\n".join(_get_plan_sites_lines(plan))
+    banner_available, _ = await _get_purchase_banner_info(state, session)
+    site_lines = "\n".join(_get_plan_sites_lines(plan, banner_available))
     feature_text = _get_plan_feature_text(plan)
     instructions = (
         f"🔐 اشتراک: {plan.name}\n"
@@ -335,13 +372,13 @@ async def handle_buy_currency_selection(query: types.CallbackQuery, state: FSMCo
         expected_amount=str(expected_amount),
         transaction_id=transaction.id,
     )
-    await query.message.edit_text(instructions, reply_markup=action_keyboard)
+    await _edit_purchase_message(query.message, instructions, reply_markup=action_keyboard)
 
 
 @router.callback_query(F.data == "buy_send_link")
 async def prompt_for_transaction_link(query: types.CallbackQuery):
     await query.answer()
-    current_text = (query.message.text or "").rstrip()
+    current_text = (query.message.caption or query.message.text or "").rstrip()
     prompt = "لطفاً لینک تراکنش خود را ارسال کنید (مطابق با سایت اکسپلورر معرفی‌شده)."
     if prompt not in current_text:
         if current_text:
@@ -351,7 +388,7 @@ async def prompt_for_transaction_link(query: types.CallbackQuery):
     action_keyboard = InlineKeyboardMarkup(
         inline_keyboard=[[InlineKeyboardButton(text="لغو", callback_data="buy_cancel")]]
     )
-    await query.message.edit_text(current_text, reply_markup=action_keyboard)
+    await _edit_purchase_message(query.message, current_text, reply_markup=action_keyboard)
 
 
 @router.message(PurchaseFlow.await_link)

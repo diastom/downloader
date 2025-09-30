@@ -41,6 +41,7 @@ class AdminFSM(StatesGroup):
     await_plan_price = State()
     await_plan_description = State()
     await_wallet_address = State()
+    await_banner_photo = State()
 
 # --- Keyboards ---
 def get_admin_panel_keyboard() -> ReplyKeyboardMarkup:
@@ -160,9 +161,14 @@ async def build_subscription_overview(session: AsyncSession) -> tuple[str, Inlin
                 lines.append(f"توضیحات: {plan.description}")
         text = "\n".join(lines)
 
+    banner_file_id = await database.get_subscription_banner_file_id(session)
+    banner_status = "تنظیم شده ✅" if banner_file_id else "تنظیم نشده ❌"
+    text = f"{text}\n\nبنر فعلی: {banner_status}"
+
     buttons = [[InlineKeyboardButton(text="➕ افزودن نوع جدید اشتراک", callback_data="sales_add_plan")]]
     if plans:
         buttons.append([InlineKeyboardButton(text="🗑 حذف نوع اشتراک", callback_data="sales_delete_plan")])
+    buttons.append([InlineKeyboardButton(text="🖼 تنظیم عکس بنر", callback_data="sales_set_banner")])
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
     return text, keyboard
 
@@ -332,6 +338,47 @@ async def sales_add_plan(query: CallbackQuery, state: FSMContext):
     await query.message.answer("نام اشتراک جدید را وارد کنید:")
     await state.set_state(AdminFSM.await_plan_name)
     await state.update_data(new_plan={})
+
+
+@router.callback_query(F.data == "sales_set_banner")
+async def sales_set_banner(query: CallbackQuery, state: FSMContext):
+    await query.answer()
+    await state.set_state(AdminFSM.await_banner_photo)
+    await query.message.answer(
+        "لطفاً تصویر بنر جدید اشتراک‌ها را ارسال کنید. برای حذف بنر فعلی عبارت «حذف» و برای لغو «لغو» را ارسال نمایید.",
+        reply_markup=ReplyKeyboardRemove(),
+    )
+
+
+@router.message(AdminFSM.await_banner_photo)
+async def sales_receive_banner(message: types.Message, state: FSMContext, session: AsyncSession):
+    text = (message.text or "").strip()
+    lower_text = text.lower()
+
+    if message.photo:
+        file_id = message.photo[-1].file_id
+        await database.set_subscription_banner_file_id(session, file_id)
+        response = "عکس بنر با موفقیت ذخیره شد."
+    elif lower_text in {"لغو", "انصراف", "/cancel", "cancel"}:
+        response = "تنظیم عکس بنر لغو شد."
+        await state.set_state(AdminFSM.sales_menu)
+        await message.answer(response, reply_markup=get_sales_keyboard())
+        overview_text, keyboard = await build_subscription_overview(session)
+        await message.answer(overview_text, reply_markup=keyboard)
+        return
+    elif lower_text in {"حذف", "پاک کردن", "remove", "delete"}:
+        await database.set_subscription_banner_file_id(session, None)
+        response = "عکس بنر حذف شد."
+    else:
+        await message.answer(
+            "لطفاً یک تصویر معتبر ارسال کنید یا برای حذف «حذف» و برای انصراف «لغو» را ارسال نمایید."
+        )
+        return
+
+    await state.set_state(AdminFSM.sales_menu)
+    await message.answer(response, reply_markup=get_sales_keyboard())
+    overview_text, keyboard = await build_subscription_overview(session)
+    await message.answer(overview_text, reply_markup=keyboard)
 
 
 @router.callback_query(F.data == "sales_delete_plan")
