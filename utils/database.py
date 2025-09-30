@@ -561,6 +561,20 @@ async def set_text(session: AsyncSession, key: str, value: str):
         session.add(bot_text)
     await session.commit()
 
+
+SUBSCRIPTION_BANNER_KEY = "subscription_banner_file_id"
+
+
+async def get_subscription_banner_file_id(session: AsyncSession) -> str | None:
+    """Returns the stored subscription banner file ID, if available."""
+    value = await get_text(session, key=SUBSCRIPTION_BANNER_KEY, default="")
+    return value or None
+
+
+async def set_subscription_banner_file_id(session: AsyncSession, file_id: str | None) -> None:
+    """Persists the subscription banner file ID (or clears it when None)."""
+    await set_text(session, key=SUBSCRIPTION_BANNER_KEY, value=file_id or "")
+
 def _update_user_site_usage(user: models.User, domain: str) -> None:
     if user.stats_site_usage is None:
         user.stats_site_usage = {}
