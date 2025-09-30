@@ -229,7 +229,7 @@ async def handle_buy_command(message: types.Message, state: FSMContext, session:
         plan_lines = [
             f"• {plan.name} | مدت: {plan.duration_days} روز | قیمت: {plan.price_toman:,} تومان",
             f"تعداد تسک دانلود روزانه: {_format_limit(plan.download_limit_per_day)}",
-            f"تعداد تسک آپلود روزانه: {_format_limit(plan.encode_limit_per_day)}",
+            f"تعداد تسک انکد روزانه: {_format_limit(plan.encode_limit_per_day)}",
             "سایت‌های فعال:",
         ]
         plan_lines.extend(_get_plan_sites_lines(plan, banner_available))
