@@ -82,6 +82,14 @@ def _get_plan_feature_text(plan) -> str:
     labels = _get_plan_feature_labels(plan)
     return " + ".join(labels) if labels else "ندارد"
 
+
+def _get_plan_description(plan) -> str | None:
+    description = getattr(plan, "description", None)
+    if not description:
+        return None
+    description = description.strip()
+    return description or None
+
 def _user_has_active_subscription(user) -> bool:
     if not user.sub_is_active:
         return False
@@ -217,12 +225,17 @@ async def handle_buy_command(message: types.Message, state: FSMContext, session:
     lines = ["پلن‌های موجود:"]
     buttons = []
     for plan in plans:
+        description = _get_plan_description(plan)
         plan_lines = [
             f"• {plan.name} | مدت: {plan.duration_days} روز | قیمت: {plan.price_toman:,} تومان",
+            f"تعداد تسک دانلود روزانه: {_format_limit(plan.download_limit_per_day)}",
+            f"تعداد تسک آپلود روزانه: {_format_limit(plan.encode_limit_per_day)}",
             "سایت‌های فعال:",
         ]
         plan_lines.extend(_get_plan_sites_lines(plan, banner_available))
         plan_lines.append(f"امکانات: {_get_plan_feature_text(plan)}")
+        if description:
+            plan_lines.append(f"توضیحات: {description}")
         lines.append("\n".join(plan_lines))
         lines.append("")
         buttons.append([InlineKeyboardButton(text=f"انتخاب {plan.name}", callback_data=f"buy_plan_{plan.id}")])
@@ -280,6 +293,7 @@ async def handle_buy_plan_selection(query: types.CallbackQuery, state: FSMContex
     banner_available, _ = await _get_purchase_banner_info(state, session)
     site_lines = "\n".join(_get_plan_sites_lines(plan, banner_available))
     feature_text = _get_plan_feature_text(plan)
+    description = _get_plan_description(plan) or "ثبت نشده است"
     summary = (
         f"اشتراک انتخابی: {plan.name}\n"
         f"مدت اشتراک: {plan.duration_days} روز\n"
@@ -287,6 +301,7 @@ async def handle_buy_plan_selection(query: types.CallbackQuery, state: FSMContex
         f"سقف انکد روزانه: {_format_limit(plan.encode_limit_per_day)}\n"
         f"سایت‌های فعال:\n{site_lines}\n"
         f"امکانات: {feature_text}\n"
+        f"توضیحات: {description}\n"
         f"قیمت: {plan.price_toman:,} تومان\n\n"
         "ارز موردنظر برای پرداخت را انتخاب کنید:"
     )
@@ -343,6 +358,7 @@ async def handle_buy_currency_selection(query: types.CallbackQuery, state: FSMCo
     banner_available, _ = await _get_purchase_banner_info(state, session)
     site_lines = "\n".join(_get_plan_sites_lines(plan, banner_available))
     feature_text = _get_plan_feature_text(plan)
+    description = _get_plan_description(plan) or "ثبت نشده است"
     instructions = (
         f"🔐 اشتراک: {plan.name}\n"
         f"مدت اشتراک: {plan.duration_days} روز\n"
@@ -350,6 +366,7 @@ async def handle_buy_currency_selection(query: types.CallbackQuery, state: FSMCo
         f"سقف انکد روزانه: {_format_limit(plan.encode_limit_per_day)}\n"
         f"سایت‌های فعال:\n{site_lines}\n"
         f"امکانات: {feature_text}\n"
+        f"توضیحات: {description}\n"
         f"قیمت: {plan.price_toman:,} تومان\n"
         f"قیمت لحظه‌ای هر {meta.display_name}: {price_toman:,.0f} تومان\n"
         f"مبلغ قابل پرداخت با {meta.display_name}: {_format_decimal(expected_amount)}\n"
