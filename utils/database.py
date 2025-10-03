@@ -162,7 +162,7 @@ async def record_task_usage(
 def format_task_limit_message(task_type: str, limit: int, used_today: int) -> str:
     """Returns a localized message explaining the daily task limit."""
     task_label = {
-        "encode": "انکد",
+        "encode": "ویرایش ویدئو",
         "download": "دانلود",
     }.get(task_type, task_type)
 

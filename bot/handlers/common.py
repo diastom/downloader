@@ -150,7 +150,7 @@ async def _build_active_subscription_response(bot, user) -> tuple[str, InlineKey
         "شما یک اشتراک فعال دارید!\n\n"
         f"روزهای باقی ماند: {_format_remaining_days(user)}\n"
         f"سقف دانلود روزانه: {_format_limit(user.sub_download_limit)}\n"
-        f"سقف انکد روزانه: {_format_limit(user.sub_encode_limit)}\n\n"
+        f"سقف ویرایش ویدئو روزانه: {_format_limit(user.sub_encode_limit)}\n\n"
         f"{bot_username}"
     )
 
@@ -171,7 +171,7 @@ async def handle_start(message: types.Message, state: FSMContext, session: Async
 
     start_message = (
         "خوش آمدید!\n\n"
-        "کافیست لینک یکی از سایت‌های پشتیبانی‌شده را بفرستید تا دانلود شروع شود، یا ویدیوی خود را ارسال کنید تا وارد پنل انکد شوید."
+        "کافیست لینک یکی از سایت‌های پشتیبانی‌شده را بفرستید تا دانلود شروع شود، یا ویدیوی خود را ارسال کنید تا وارد پنل ویرایش ویدئو شوید."
     )
     await message.answer(start_message, reply_markup=get_main_reply_keyboard())
 
@@ -189,7 +189,7 @@ async def start_encode_flow(query: types.CallbackQuery, state: FSMContext):
     """Reminds the user how to begin an encode."""
     await state.set_state(UserFlow.encoding)
     await query.message.edit_text(
-        "برای ورود به پنل انکد، ویدیوی مورد نظر خود را ارسال کنید."
+        "برای ورود به پنل ویرایش ویدئو، ویدیوی مورد نظر خود را ارسال کنید."
     )
     await query.answer()
 
@@ -303,7 +303,7 @@ async def handle_buy_plan_selection(query: types.CallbackQuery, state: FSMContex
         f"اشتراک انتخابی: {plan.name}\n"
         f"مدت اشتراک: {plan.duration_days} روز\n"
         f"سقف دانلود روزانه: {_format_limit(plan.download_limit_per_day)}\n"
-        f"سقف انکد روزانه: {_format_limit(plan.encode_limit_per_day)}\n"
+        f"سقف ویرایش ویدئو روزانه: {_format_limit(plan.encode_limit_per_day)}\n"
         f"سایت‌های فعال:\n{site_lines}\n"
         f"امکانات: {feature_text}\n"
         f"توضیحات: {description}\n"
