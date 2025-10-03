@@ -220,30 +220,29 @@ async def handle_buy_command(message: types.Message, state: FSMContext, session:
         return
 
     banner_file_id = await database.get_subscription_banner_file_id(session)
-    banner_available = bool(banner_file_id)
 
-    lines = ["پلن‌های موجود:"]
+    info_lines = [
+        "<b>بعد از پرداخت اشتراک شما بلافاصله فعال می‌شود.</b>",
+        "💡 می‌تونید از طریق موجودی مجموعه ( @Uploaderi ) هم اشتراک تهیه کنید.",
+        " • فقط کافیه به @xdevil پیام بدین",
+        "",
+        "پلن مورد نظر خود را انتخاب کنید 👇",
+    ]
+
     buttons = []
     for plan in plans:
-        description = _get_plan_description(plan)
-        plan_lines = [
-            f"• {plan.name} | مدت: {plan.duration_days} روز | قیمت: {plan.price_toman:,} تومان",
-            f"تعداد تسک دانلود روزانه: {_format_limit(plan.download_limit_per_day)}",
-            f"تعداد تسک انکد روزانه: {_format_limit(plan.encode_limit_per_day)}",
-            "سایت‌های فعال:",
-        ]
-        plan_lines.extend(_get_plan_sites_lines(plan, banner_available))
-        plan_lines.append(f"امکانات: {_get_plan_feature_text(plan)}")
-        if description:
-            plan_lines.append(f"توضیحات: {description}")
-        lines.append("\n".join(plan_lines))
-        lines.append("")
-        buttons.append([InlineKeyboardButton(text=f"انتخاب {plan.name}", callback_data=f"buy_plan_{plan.id}")])
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    text=f"انتخاب {plan.name}", callback_data=f"buy_plan_{plan.id}"
+                )
+            ]
+        )
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
     await state.set_state(PurchaseFlow.select_plan)
     await state.update_data(purchase_context={"banner_file_id": banner_file_id or ""})
-    response_text = "\n".join(lines).strip()
+    response_text = "\n".join(info_lines).strip()
     if banner_file_id:
         await message.answer_photo(banner_file_id, caption=response_text, reply_markup=keyboard)
     else:
