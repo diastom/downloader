@@ -1,3 +1,5 @@
+import html
+
 from aiogram import Router, types, F
 from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandStart
@@ -102,11 +104,15 @@ async def _edit_purchase_message(
     message: types.Message,
     text: str,
     reply_markup: InlineKeyboardMarkup | None = None,
+    parse_mode: ParseMode | None = None,
 ):
+    extra = {"reply_markup": reply_markup}
+    if parse_mode:
+        extra["parse_mode"] = parse_mode
     if message.content_type == "photo" and message.photo:
-        await message.edit_caption(caption=text, reply_markup=reply_markup)
+        await message.edit_caption(caption=text, **extra)
     else:
-        await message.edit_text(text, reply_markup=reply_markup)
+        await message.edit_text(text, **extra)
 
 
 async def _get_purchase_banner_info(
@@ -354,24 +360,14 @@ async def handle_buy_currency_selection(query: types.CallbackQuery, state: FSMCo
         wallet_address=wallet.address,
     )
 
-    banner_available, _ = await _get_purchase_banner_info(state, session)
-    site_lines = "\n".join(_get_plan_sites_lines(plan, banner_available))
-    feature_text = _get_plan_feature_text(plan)
-    description = _get_plan_description(plan) or "ثبت نشده است"
-    instructions = (
-        f"🔐 اشتراک: {plan.name}\n"
-        f"مدت اشتراک: {plan.duration_days} روز\n"
-        f"سقف دانلود روزانه: {_format_limit(plan.download_limit_per_day)}\n"
-        f"سقف انکد روزانه: {_format_limit(plan.encode_limit_per_day)}\n"
-        f"سایت‌های فعال:\n{site_lines}\n"
-        f"امکانات: {feature_text}\n"
-        f"توضیحات: {description}\n"
-        f"قیمت: {plan.price_toman:,} تومان\n"
-        f"قیمت لحظه‌ای هر {meta.display_name}: {price_toman:,.0f} تومان\n"
-        f"مبلغ قابل پرداخت با {meta.display_name}: {_format_decimal(expected_amount)}\n"
-        f"آدرس ولت: {wallet.address}\n\n"
-        f"{meta.instructions}\n"
-        "پس از انجام تراکنش روی دکمه زیر بزنید و لینک تراکنش را ارسال کنید."
+    currency_label = "ترون" if currency_code == "TRX" else meta.display_name
+    amount_suffix = "TRX" if currency_code == "TRX" else meta.code
+    instructions = "\n".join(
+        [
+            f"قیمت {currency_label}: {price_toman:,.0f} تومان",
+            f"مبلغ قابل پرداخت: {_format_decimal(expected_amount)} {amount_suffix}",
+            f"آدرس ولت: <code>{html.escape(wallet.address)}</code>",
+        ]
     )
 
     action_keyboard = InlineKeyboardMarkup(
@@ -388,7 +384,12 @@ async def handle_buy_currency_selection(query: types.CallbackQuery, state: FSMCo
         expected_amount=str(expected_amount),
         transaction_id=transaction.id,
     )
-    await _edit_purchase_message(query.message, instructions, reply_markup=action_keyboard)
+    await _edit_purchase_message(
+        query.message,
+        instructions,
+        reply_markup=action_keyboard,
+        parse_mode=ParseMode.HTML,
+    )
 
 
 @router.callback_query(F.data == "buy_send_link")
@@ -404,7 +405,12 @@ async def prompt_for_transaction_link(query: types.CallbackQuery):
     action_keyboard = InlineKeyboardMarkup(
         inline_keyboard=[[InlineKeyboardButton(text="لغو", callback_data="buy_cancel")]]
     )
-    await _edit_purchase_message(query.message, current_text, reply_markup=action_keyboard)
+    await _edit_purchase_message(
+        query.message,
+        current_text,
+        reply_markup=action_keyboard,
+        parse_mode=ParseMode.HTML,
+    )
 
 
 @router.message(PurchaseFlow.await_link)
