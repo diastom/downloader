@@ -287,7 +287,7 @@ async def handle_start_button(query: types.CallbackQuery, state: FSMContext, ses
 
     await database.record_task_usage(session, user_id, "encode")
 
-    await query.message.edit_text("✅ درخواست شما به صف انکد اضافه شد...")
+    await query.message.edit_text("✅ درخواست شما به صف ویرایش ویدئو اضافه شد...")
     video_tasks.encode_video_task.delay(
         user_id=user_id,
         username=query.from_user.username or "N/A",

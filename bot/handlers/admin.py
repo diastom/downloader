@@ -151,7 +151,7 @@ async def build_subscription_overview(session: AsyncSession) -> tuple[str, Inlin
                 f"\n{idx}. {plan.name}\n"
                 f"مدت اشتراک: {plan.duration_days} روز\n"
                 f"سقف دانلود روزانه: {_format_limit_value(plan.download_limit_per_day)}\n"
-                f"سقف انکد روزانه: {_format_limit_value(plan.encode_limit_per_day)}\n"
+                f"سقف ویرایش ویدئو روزانه: {_format_limit_value(plan.encode_limit_per_day)}\n"
                 f"قیمت: {plan.price_toman:,} تومان\n"
                 f"سایت‌های فعال:\n{site_lines}\n"
                 f"امکانات: {feature_summary}"
@@ -563,7 +563,7 @@ async def sales_plan_receive_download_limit(message: types.Message, state: FSMCo
     plan = data.get("new_plan", {})
     plan["download_limit_per_day"] = limit
     await state.update_data(new_plan=plan)
-    await message.answer("سقف انکد روزانه را وارد کنید (برای نامحدود عدد -1 را ارسال کنید):")
+    await message.answer("سقف ویرایش ویدئو روزانه را وارد کنید (برای نامحدود عدد -1 را ارسال کنید):")
     await state.set_state(AdminFSM.await_plan_encode_limit)
 
 
