@@ -25,54 +25,42 @@ if __name__ == "__main__":
             video_title = info_dict.get('title', 'video')
             formats = info_dict.get('formats', [])
 
-            # 2. فیلتر کردن و ساختن لیستی از رزولوشن‌های ویدئویی موجود
-            available_resolutions = {}
-            for f in formats:
-                # vcodec!='none' یعنی فرمت فقط صوتی نیست و height یعنی رزولوشن دارد
-                if f.get('vcodec') != 'none' and f.get('height'):
-                    height = f['height']
-                    # جلوگیری از نمایش کیفیت‌های تکراری
-                    if height not in available_resolutions:
-                         # تخمین حجم فایل برای نمایش به کاربر
-                         filesize = f.get('filesize') or f.get('filesize_approx')
-                         note = f"{height}p"
-                         if filesize:
-                             note += f" (~{filesize / (1024*1024):.2f} MB)"
-                         available_resolutions[height] = note
-            
-            if not available_resolutions:
+            # 2. انتخاب خودکار بهترین کیفیت ممکن
+            candidates = [f for f in formats if f.get('vcodec') != 'none' and f.get('height')]
+            if not candidates:
                 print("هیچ کیفیت قابل دانلودی برای این ویدئو پیدا نشد.")
                 exit()
-            
-            # مرتب‌سازی کیفیت‌ها از بالاترین به پایین‌ترین
-            sorted_resolutions = sorted(available_resolutions.items(), key=lambda item: item[0], reverse=True)
 
-            print("\nکیفیت‌های موجود:")
-            for i, (height, note) in enumerate(sorted_resolutions):
-                print(f"  {i + 1}: {note}")
+            av_candidates = [f for f in candidates if f.get('acodec') and f.get('acodec') != 'none']
+            selection_pool = av_candidates if av_candidates else candidates
+            best_format = max(
+                selection_pool,
+                key=lambda f: ((f.get('height') or 0), (f.get('tbr') or 0), (f.get('filesize') or f.get('filesize_approx') or 0))
+            )
 
-            # 3. دریافت انتخاب کاربر
-            choice = -1
-            while choice < 1 or choice > len(sorted_resolutions):
-                try:
-                    raw_choice = input(f"لطفا کیفیت مورد نظر را انتخاب کنید (1-{len(sorted_resolutions)}):\n> ")
-                    choice = int(raw_choice)
-                except (ValueError, IndexError):
-                    print("انتخاب نامعتبر است. لطفا یک عدد از لیست بالا وارد کنید.")
+            height = best_format.get('height')
+            approx_size = best_format.get('filesize') or best_format.get('filesize_approx')
+            if approx_size:
+                approx_size /= (1024 * 1024)
 
-            selected_height = sorted_resolutions[choice - 1][0]
-            
+            if best_format in av_candidates and best_format.get('format_id'):
+                format_string = best_format['format_id']
+            elif height:
+                format_string = f'bestvideo[height={height}]+bestaudio/best'
+            else:
+                format_string = 'bestvideo+bestaudio/best'
+
             print(f"\nعنوان ویدئو: {video_title}")
-            print(f"کیفیت انتخاب شده: {selected_height}p")
+            if height:
+                print(f"کیفیت انتخاب شده: {height}p")
+            if approx_size:
+                print(f"حجم تقریبی: {approx_size:.2f} مگابایت")
 
-            # 4. ساختن "فرمت استرینگ" برای yt-dlp و تنظیمات نهایی دانلود
-            # این دستور به yt-dlp می‌گوید بهترین ویدئو با ارتفاع مشخص را با بهترین صدای ممکن ترکیب کن
-            format_string = f'bestvideo[height={selected_height}]+bestaudio/best[height={selected_height}]'
             safe_title = sanitize_filename(video_title)
 
             ydl_opts = {
                 'format': format_string,
-                'outtmpl': f'{safe_title} - {selected_height}p.%(ext)s',
+                'outtmpl': f'{safe_title}.%(ext)s' if not height else f'{safe_title} - {height}p.%(ext)s',
                 'merge_output_format': 'mp4',
             }
 

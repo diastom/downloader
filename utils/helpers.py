@@ -55,6 +55,7 @@ COMICK_DOMAIN = "comick.io"
 PORNHUB_DOMAIN = "pornhub.com"
 EROME_DOMAIN = "erome.com"
 EPORNER_DOMAIN = "eporner.com"
+XVIDEOS_DOMAIN = "xvideos.com"
 GALLERY_DL_SITES = ["rule34.xyz", "coomer.st", "aryion.com", "kemono.cr", "tapas.io", "tsumino.com", "danbooru.donmai.us", "e621.net"]
 GALLERY_DL_ZIP_SITES = ["mangadex.org", "e-hentai.org"]
 
@@ -63,7 +64,7 @@ ALL_SUPPORTED_SITES = {
     "Gallery/Hentai": GALLERY_DL_SITES + GALLERY_DL_ZIP_SITES,
     "Album": [EROME_DOMAIN],
     "Cosplay": [COSPLAYTELE_DOMAIN],
-    "Video": [PORNHUB_DOMAIN, EPORNER_DOMAIN]
+    "Video": [PORNHUB_DOMAIN, EPORNER_DOMAIN, XVIDEOS_DOMAIN]
 }
 
 COOKIES_FILE_PATH = "pornhub_cookies.txt"
