@@ -101,6 +101,7 @@ COMICK_DOMAIN = "comick.io"
 PORNHUB_DOMAIN = "pornhub.com"
 EROME_DOMAIN = "erome.com"
 EPORNER_DOMAIN = "eporner.com"
+XVIDEOS_DOMAIN = "xvideos.com"
 
 THUMBNAIL_DB = "Thumb.json"
 SET_THUMBNAIL_TEXT = "🖼️ تنظیم تامبنیل"
@@ -110,7 +111,7 @@ ALL_SUPPORTED_SITES = {
     "Gallery/Hentai": GALLERY_DL_SITES + GALLERY_DL_ZIP_SITES,
     "Album": [EROME_DOMAIN],
     "Cosplay": [COSPLAYTELE_DOMAIN],
-    "Video": [PORNHUB_DOMAIN, EPORNER_DOMAIN] 
+    "Video": [PORNHUB_DOMAIN, EPORNER_DOMAIN, XVIDEOS_DOMAIN]
 }
 
 
@@ -1942,7 +1943,7 @@ async def handle_pornhub_link(update: Update, context: ContextTypes.DEFAULT_TYPE
     domain = parsed_url.netloc.lower().replace('www.', '')
 
     
-    if domain not in [PORNHUB_DOMAIN, EPORNER_DOMAIN]:
+    if domain not in [PORNHUB_DOMAIN, EPORNER_DOMAIN, XVIDEOS_DOMAIN]:
         
         logger.warning(f"Handler received an unexpected domain: {domain}")
         
@@ -4296,11 +4297,12 @@ def main() -> None:
         ~filters.Regex(COMICK_DOMAIN) &
         ~filters.Regex(gallery_dl_sites_pattern) &
         ~filters.Regex(PORNHUB_DOMAIN) &
-        ~filters.Regex(EROME_DOMAIN) & 
-        ~filters.Regex(EPORNER_DOMAIN)
+        ~filters.Regex(EROME_DOMAIN) &
+        ~filters.Regex(EPORNER_DOMAIN) &
+        ~filters.Regex(XVIDEOS_DOMAIN)
     )
     application.add_handler(MessageHandler(general_link_filter, handle_link))
-    video_sites_pattern = f"({PORNHUB_DOMAIN}|{EPORNER_DOMAIN})"
+    video_sites_pattern = f"({PORNHUB_DOMAIN}|{EPORNER_DOMAIN}|{XVIDEOS_DOMAIN})"
     application.add_handler(MessageHandler(filters.TEXT & filters.Regex(video_sites_pattern), handle_pornhub_link)) 
     
     application.add_handler(CallbackQueryHandler(button_callback))

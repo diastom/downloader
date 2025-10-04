@@ -28,7 +28,7 @@ SITE_CONFIG = {
     helpers.COMICK_DOMAIN: {"get_chapters": helpers.cm_get_info_and_chapters, "needs_selenium": True},
 }
 MANHWA_DOMAINS = SITE_CONFIG.keys()
-VIDEO_DOMAINS = [helpers.PORNHUB_DOMAIN, helpers.EPORNER_DOMAIN]
+VIDEO_DOMAINS = [helpers.PORNHUB_DOMAIN, helpers.EPORNER_DOMAIN, helpers.XVIDEOS_DOMAIN]
 
 # --- FSM States ---
 class DownloadFSM(StatesGroup):
@@ -127,16 +127,24 @@ async def handle_yt_dlp_link(message: types.Message, state: FSMContext, url: str
     if not formats:
         await status_msg.edit_text("No downloadable video qualities found.")
         return
+    av_formats = [f for f in formats if f.get('acodec') and f.get('acodec') != 'none']
+    selection_pool = av_formats if av_formats else formats
     best_format = max(
-        formats,
+        selection_pool,
         key=lambda f: ((f.get('height') or 0), (f.get('tbr') or 0), (f.get('filesize') or f.get('filesize_approx') or 0))
     )
     height = best_format.get('height')
-    approx_size = (best_format.get('filesize') or best_format.get('filesize_approx') or 0) / (1024 * 1024)
-    format_id = best_format.get('format_id')
-    if not format_id:
-        await status_msg.edit_text("❌ Error: Could not determine the best quality format.")
-        return
+    approx_size = (best_format.get('filesize') or best_format.get('filesize_approx') or 0)
+    if approx_size:
+        approx_size /= (1024 * 1024)
+
+    if best_format in av_formats and best_format.get('format_id'):
+        format_id = best_format.get('format_id')
+    elif height:
+        format_id = f"bestvideo[height={height}]+bestaudio/best"
+    else:
+        format_id = "bestvideo+bestaudio/best"
+
     quality_display = f"{height}p" if height else "Best available"
     size_display = f"{approx_size:.2f} MB" if approx_size else "نامشخص"
     allowed, error_message = await _reserve_task_slot(session, message.from_user.id)
